@@ -7,12 +7,19 @@ ENV JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64
 ENV PATH=$PATH:$ANDROID_SDK_ROOT/cmdline-tools/latest/bin:$ANDROID_SDK_ROOT/platform-tools:$JAVA_HOME/bin
 
 # --- Base dependencies -------------------------------------------------
+# Both JDK 17 and JDK 21 are installed side by side: build.sh's
+# ensure_compatible_java() inspects the generated android/ project at
+# runtime and switches JAVA_HOME to whichever satisfies the capacitor-android
+# module's own sourceCompatibility (currently 21, previously 17) — so a
+# future Capacitor bump doesn't require another image rebuild, mirroring
+# how ensure_capacitor_compatible_node() already handles Node.
 RUN apt-get update && apt-get install -y --no-install-recommends \
     wget \
     unzip \
     ca-certificates \
     git \
     openjdk-17-jdk-headless \
+    openjdk-21-jdk-headless \
     gradle \
     && rm -rf /var/lib/apt/lists/*
 

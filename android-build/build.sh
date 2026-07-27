@@ -98,6 +98,53 @@ ensure_capacitor_compatible_node() {
 ensure_capacitor_compatible_node
 
 # ---------------------------------------------------------------------------
+# ensure_compatible_java(): self-healing JDK version check, mirroring
+# ensure_capacitor_compatible_node() above. Scans the generated android/
+# project (including the capacitor-android module pulled into
+# node_modules/@capacitor/android) for the highest Java sourceCompatibility
+# it declares, and switches JAVA_HOME to a JDK that satisfies it before
+# Gradle runs — instead of hard-failing with "invalid source release: N"
+# the way this did when capacitor-android bumped its required JDK to 21
+# while the image was still pinned to JAVA_HOME=java-17.
+# ---------------------------------------------------------------------------
+ensure_compatible_java() {
+  local required_major current_major candidate_home
+
+  required_major="$(
+    grep -rhoE 'JavaVersion\.VERSION_[0-9]+' \
+      android/build.gradle android/app/build.gradle android/*/build.gradle \
+      node_modules/@capacitor/android/capacitor/build.gradle \
+      2>/dev/null \
+    | grep -oE '[0-9]+$' \
+    | sort -n | tail -n1 || true
+  )"
+
+  if [ -z "$required_major" ]; then
+    return 0
+  fi
+
+  current_major="$(java -version 2>&1 | grep -oE '"[0-9]+' | head -n1 | tr -d '"')"
+
+  if [ -n "$current_major" ] && [ "$current_major" -ge "$required_major" ]; then
+    return 0
+  fi
+
+  candidate_home="/usr/lib/jvm/java-${required_major}-openjdk-amd64"
+  if [ ! -d "$candidate_home" ]; then
+    notice "error" "Missing JDK $required_major" \
+      "capacitor-android requires JDK $required_major, but it isn't installed in this image. Add openjdk-${required_major}-jdk-headless to docker/android-build/Dockerfile and rebuild the apk-builder-android image."
+    return 1
+  fi
+
+  notice "warning" "Switching JDK at runtime" \
+    "capacitor-android requires JDK $required_major, but this container defaulted to JDK ${current_major:-unknown}. Switching JAVA_HOME to $candidate_home and continuing."
+  export JAVA_HOME="$candidate_home"
+  export PATH="$JAVA_HOME/bin:$PATH"
+  hash -r
+  notice "info" "JDK switched" "Now running $(java -version 2>&1 | head -n1)."
+}
+
+# ---------------------------------------------------------------------------
 # run_cap_step(): run a Capacitor CLI step; if it fails and its own output
 # suggests a fix in the form "npm install <package(s)>" — which is exactly
 # how these CLI errors are worded (e.g. "You must install it in your project
@@ -214,6 +261,8 @@ if [ -f "$MANIFEST" ] && ! grep -q "android.permission.INTERNET" "$MANIFEST"; th
 fi
 
 echo "sdk.dir=$ANDROID_SDK_ROOT" > android/local.properties
+
+ensure_compatible_java
 
 echo "--- Building APK with Gradle ---"
 cd android
