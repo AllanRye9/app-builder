@@ -1,12 +1,46 @@
 #!/bin/bash
 set -euo pipefail
 
-PROJECT_DIR=/project   # mounted from host (extracted upload)
-OUTPUT_DIR=/output     # mounted from host (where the APK lands)
+PROJECT_DIR=/project   # bind-mounted from the caller (host or apk-builder server)
+OUTPUT_DIR=/output     # bind-mounted from the caller (where the APK lands)
 APP_ID="${APP_ID:-com.builder.app}"
 APP_NAME="${APP_NAME:-MyApp}"
 
 echo "=== apk-builder: starting build ==="
+
+# --- Fail fast with a clear message instead of a bare "cd: No such file" ---
+# This is almost always caused by running the image without the required
+# bind mounts, e.g.:
+#
+#     docker run --rm apk-builder-android          # <- missing -v flags
+#
+# instead of:
+#
+#     docker run --rm \
+#       -v "$(pwd)/my-react-app:/project" \
+#       -v "$(pwd)/output:/output" \
+#       apk-builder-android
+#
+# If this container was launched by the apk-builder web server, this
+# usually means JOB_ROOT / HOST_JOB_ROOT don't agree — see src/config.js.
+if [ ! -d "$PROJECT_DIR" ]; then
+  echo "ERROR: $PROJECT_DIR does not exist inside this container." >&2
+  echo "This image expects your project to be bind-mounted at $PROJECT_DIR." >&2
+  echo 'Run it as: docker run --rm -v "$(pwd)/my-app:/project" -v "$(pwd)/output:/output" apk-builder-android' >&2
+  exit 1
+fi
+
+if [ -z "$(ls -A "$PROJECT_DIR" 2>/dev/null)" ]; then
+  echo "ERROR: $PROJECT_DIR was mounted but is empty." >&2
+  echo "Check that the host path you bind-mounted actually contains your React project (with package.json at its root)." >&2
+  exit 1
+fi
+
+if [ ! -d "$OUTPUT_DIR" ]; then
+  echo "ERROR: $OUTPUT_DIR does not exist inside this container. Mount an output directory with -v \"\$(pwd)/output:/output\"." >&2
+  exit 1
+fi
+
 cd "$PROJECT_DIR"
 
 echo "--- Installing dependencies ---"

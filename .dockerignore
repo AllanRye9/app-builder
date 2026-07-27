@@ -2,5 +2,8 @@ node_modules
 npm-debug.log
 .git
 .gitignore
-public
 *.md
+.jobs
+web/node_modules
+web/dist
+docker/android-build/node_modules

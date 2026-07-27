@@ -1,15 +1,17 @@
 {
   "name": "apk-builder",
-  "version": "1.0.0",
+  "version": "2.0.0",
   "description": "Web service that turns an uploaded React/Capacitor project into a downloadable APK using an isolated Docker build.",
-  "main": "server.js",
+  "main": "src/index.js",
   "type": "commonjs",
   "scripts": {
-    "start": "node server.js",
-    "dev": "node --watch server.js"
+    "start": "node src/index.js",
+    "dev": "node --watch src/index.js",
+    "build:web": "npm --prefix web install && npm --prefix web run build",
+    "dev:web": "npm --prefix web run dev"
   },
   "dependencies": {
-    "adm-zip": "^0.6.0",
+    "adm-zip": "^0.5.16",
     "express": "^4.21.2",
     "multer": "^2.0.1",
     "uuid": "^11.0.5"

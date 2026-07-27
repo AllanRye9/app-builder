@@ -1,3 +1,6 @@
-node_modules/
-*.log
+node_modules
+npm-debug.log
+.jobs
+web/node_modules
+web/dist
 .env

@@ -1,46 +1,35 @@
-FROM ubuntu:22.04
+# syntax=docker/dockerfile:1
 
-ENV DEBIAN_FRONTEND=noninteractive
-ENV ANDROID_SDK_ROOT=/opt/android-sdk
-ENV ANDROID_HOME=/opt/android-sdk
-ENV JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64
-ENV PATH=$PATH:$ANDROID_SDK_ROOT/cmdline-tools/latest/bin:$ANDROID_SDK_ROOT/platform-tools:$JAVA_HOME/bin
+# ---------------------------------------------------------------------------
+# Stage 1: build the React frontend
+# ---------------------------------------------------------------------------
+FROM node:20-alpine AS web-build
+WORKDIR /web
+COPY web/package.json web/package-lock.json* ./
+RUN npm install
+COPY web/ ./
+RUN npm run build
 
-# --- Base dependencies -------------------------------------------------
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    wget \
-    unzip \
-    ca-certificates \
-    git \
-    openjdk-17-jdk-headless \
-    gradle \
-    && rm -rf /var/lib/apt/lists/*
+# ---------------------------------------------------------------------------
+# Stage 2: production server
+# ---------------------------------------------------------------------------
+FROM node:20-alpine AS app
 
-# --- Node.js 20 (Ubuntu 22.04's default apt Node is too old for modern React tooling) --
-RUN wget -qO- https://deb.nodesource.com/setup_20.x | bash - \
-    && apt-get install -y --no-install-recommends nodejs \
-    && rm -rf /var/lib/apt/lists/*
+# Only the Docker CLI is needed here — this container talks to the *host's*
+# Docker daemon over a mounted /var/run/docker.sock (Docker-outside-of-Docker)
+# rather than running its own daemon. See src/config.js and
+# src/dockerRunner.js for why HOST_JOB_ROOT exists and matters for this setup.
+RUN apk add --no-cache docker-cli
 
-# --- Android SDK command-line tools ------------------------------------
-RUN mkdir -p $ANDROID_SDK_ROOT/cmdline-tools \
-    && wget -q https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip -O /tmp/cmdline-tools.zip \
-    && unzip -q /tmp/cmdline-tools.zip -d $ANDROID_SDK_ROOT/cmdline-tools \
-    && mv $ANDROID_SDK_ROOT/cmdline-tools/cmdline-tools $ANDROID_SDK_ROOT/cmdline-tools/latest \
-    && rm /tmp/cmdline-tools.zip
+WORKDIR /app
+COPY package.json package-lock.json* ./
+RUN npm install --omit=dev
+COPY src/ ./src/
+COPY --from=web-build /web/dist ./web/dist
 
-# --- Pre-accept licenses & pre-install SDK packages so builds never hit ---
-# --- an interactive prompt and don't re-download the SDK every run -------
-RUN yes | $ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager --licenses > /dev/null \
-    && $ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager \
-        "platform-tools" \
-        "platforms;android-35" \
-        "build-tools;34.0.0" > /dev/null
+ENV NODE_ENV=production
+ENV JOB_ROOT=/workspace/jobs
+RUN mkdir -p /workspace/jobs
 
-# --- Capacitor CLI, available globally inside the image -----------------
-RUN npm install -g @capacitor/cli@latest
-
-WORKDIR /build
-COPY build.sh /build/build.sh
-RUN chmod +x /build/build.sh
-
-ENTRYPOINT ["/build/build.sh"]
+EXPOSE 3000
+CMD ["node", "src/index.js"]
