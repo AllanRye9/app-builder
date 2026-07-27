@@ -1,0 +1,351 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>apk-builder</title>
+<style>
+  :root {
+    --bg: #0b0e11;
+    --panel: #12161b;
+    --panel-2: #171c22;
+    --line: #232a32;
+    --text: #e6edf3;
+    --text-dim: #7d8894;
+    --accent: #4ee1a0;
+    --accent-dim: #2c7a58;
+    --amber: #f5a623;
+    --red: #ff5c5c;
+    --mono: ui-monospace, "JetBrains Mono", "SFMono-Regular", Menlo, Consolas, monospace;
+    --sans: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--sans);
+    min-height: 100vh;
+    display: flex;
+    justify-content: center;
+    padding: 48px 20px 80px;
+  }
+  main { width: 100%; max-width: 720px; }
+
+  header { margin-bottom: 32px; }
+  .eyebrow {
+    font-family: var(--mono);
+    font-size: 12px;
+    letter-spacing: 0.12em;
+    color: var(--accent);
+    text-transform: uppercase;
+    margin-bottom: 10px;
+  }
+  h1 {
+    font-size: 28px;
+    margin: 0 0 8px;
+    letter-spacing: -0.01em;
+  }
+  p.sub { color: var(--text-dim); margin: 0; font-size: 14.5px; line-height: 1.5; }
+
+  .card {
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    padding: 28px;
+    margin-bottom: 20px;
+  }
+
+  #dropzone {
+    border: 1.5px dashed var(--line);
+    border-radius: 8px;
+    padding: 40px 20px;
+    text-align: center;
+    cursor: pointer;
+    transition: border-color 0.15s ease, background 0.15s ease;
+  }
+  #dropzone:hover, #dropzone.drag {
+    border-color: var(--accent-dim);
+    background: rgba(78, 225, 160, 0.04);
+  }
+  #dropzone .icon { font-family: var(--mono); font-size: 22px; color: var(--text-dim); margin-bottom: 12px; }
+  #dropzone .primary { font-size: 15px; margin-bottom: 4px; }
+  #dropzone .secondary { font-size: 13px; color: var(--text-dim); }
+  #fileInput { display: none; }
+
+  #fileName {
+    font-family: var(--mono);
+    font-size: 13px;
+    color: var(--accent);
+    margin-top: 14px;
+    display: none;
+  }
+
+  button#buildBtn {
+    width: 100%;
+    margin-top: 18px;
+    padding: 13px;
+    border-radius: 7px;
+    border: none;
+    background: var(--accent);
+    color: #05130d;
+    font-weight: 600;
+    font-size: 14.5px;
+    cursor: pointer;
+    transition: opacity 0.15s ease;
+  }
+  button#buildBtn:disabled { opacity: 0.35; cursor: not-allowed; }
+  button#buildBtn:not(:disabled):hover { opacity: 0.88; }
+
+  #pipeline {
+    display: none;
+    margin-top: 4px;
+  }
+  .stage-row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 10px 0;
+    position: relative;
+  }
+  .stage-row:not(:last-child)::after {
+    content: "";
+    position: absolute;
+    left: 9px;
+    top: 30px;
+    width: 1px;
+    height: 20px;
+    background: var(--line);
+  }
+  .dot {
+    width: 19px; height: 19px;
+    border-radius: 50%;
+    border: 1.5px solid var(--line);
+    flex-shrink: 0;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 11px;
+    font-family: var(--mono);
+  }
+  .stage-row.done .dot { border-color: var(--accent); background: var(--accent); color: #05130d; }
+  .stage-row.active .dot { border-color: var(--amber); }
+  .stage-row.active .dot::after {
+    content: ""; width: 7px; height: 7px; border-radius: 50%; background: var(--amber);
+    animation: pulse 1s ease-in-out infinite;
+  }
+  .stage-row.failed .dot { border-color: var(--red); background: var(--red); color: #1a0505; }
+  @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.3; } }
+  .stage-label { font-size: 14px; color: var(--text-dim); }
+  .stage-row.done .stage-label, .stage-row.active .stage-label { color: var(--text); }
+  .stage-row.failed .stage-label { color: var(--red); }
+
+  #logPanel {
+    display: none;
+    margin-top: 18px;
+    background: #08090b;
+    border: 1px solid var(--line);
+    border-radius: 7px;
+    padding: 14px 16px;
+    font-family: var(--mono);
+    font-size: 12.5px;
+    line-height: 1.6;
+    color: #9fb0bd;
+    max-height: 280px;
+    overflow-y: auto;
+    white-space: pre-wrap;
+    word-break: break-all;
+  }
+  #logPanel .cursor::after { content: "▍"; color: var(--accent); animation: pulse 0.9s step-start infinite; }
+
+  #downloadRow { display: none; margin-top: 18px; }
+  a#downloadBtn {
+    display: block;
+    text-align: center;
+    padding: 13px;
+    border-radius: 7px;
+    background: var(--accent);
+    color: #05130d;
+    font-weight: 600;
+    font-size: 14.5px;
+    text-decoration: none;
+  }
+
+  #errorBox {
+    display: none;
+    margin-top: 16px;
+    padding: 12px 14px;
+    border-radius: 7px;
+    background: rgba(255, 92, 92, 0.08);
+    border: 1px solid rgba(255, 92, 92, 0.35);
+    color: #ffb3b3;
+    font-size: 13.5px;
+    font-family: var(--mono);
+  }
+
+  footer {
+    color: var(--text-dim);
+    font-size: 12.5px;
+    text-align: center;
+    margin-top: 36px;
+  }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <div class="eyebrow">apk-builder</div>
+    <h1>Turn a React project into an APK</h1>
+    <p class="sub">Upload a .zip of a plain React (or Capacitor-ready) project. It's built inside an isolated, disposable Docker container with a pre-configured Android SDK — nothing runs on your machine.</p>
+  </header>
+
+  <div class="card">
+    <div id="dropzone">
+      <div class="icon">[ .zip ]</div>
+      <div class="primary">Drop your project archive here</div>
+      <div class="secondary">or click to browse — package.json required, no android/ios folders</div>
+    </div>
+    <input type="file" id="fileInput" accept=".zip" />
+    <div id="fileName"></div>
+    <button id="buildBtn" disabled>Build APK</button>
+
+    <div id="pipeline">
+      <div class="stage-row" data-stage="validating"><div class="dot"></div><div class="stage-label">Validating archive</div></div>
+      <div class="stage-row" data-stage="queued"><div class="dot"></div><div class="stage-label">Queued for build</div></div>
+      <div class="stage-row" data-stage="building"><div class="dot"></div><div class="stage-label">Building in container</div></div>
+      <div class="stage-row" data-stage="success"><div class="dot"></div><div class="stage-label">APK ready</div></div>
+    </div>
+
+    <div id="logPanel"></div>
+    <div id="errorBox"></div>
+    <div id="downloadRow">
+      <a id="downloadBtn" href="#">Download app.apk</a>
+    </div>
+  </div>
+
+  <footer>Builds run with capped CPU/memory in an ephemeral container that's destroyed after each job.</footer>
+</main>
+
+<script>
+const dropzone = document.getElementById('dropzone');
+const fileInput = document.getElementById('fileInput');
+const fileNameEl = document.getElementById('fileName');
+const buildBtn = document.getElementById('buildBtn');
+const pipeline = document.getElementById('pipeline');
+const logPanel = document.getElementById('logPanel');
+const errorBox = document.getElementById('errorBox');
+const downloadRow = document.getElementById('downloadRow');
+const downloadBtn = document.getElementById('downloadBtn');
+
+let selectedFile = null;
+
+dropzone.addEventListener('click', () => fileInput.click());
+dropzone.addEventListener('dragover', (e) => { e.preventDefault(); dropzone.classList.add('drag'); });
+dropzone.addEventListener('dragleave', () => dropzone.classList.remove('drag'));
+dropzone.addEventListener('drop', (e) => {
+  e.preventDefault();
+  dropzone.classList.remove('drag');
+  if (e.dataTransfer.files.length) handleFile(e.dataTransfer.files[0]);
+});
+fileInput.addEventListener('change', () => {
+  if (fileInput.files.length) handleFile(fileInput.files[0]);
+});
+
+function handleFile(file) {
+  if (!file.name.toLowerCase().endsWith('.zip')) {
+    alert('Please select a .zip archive.');
+    return;
+  }
+  selectedFile = file;
+  fileNameEl.textContent = `${file.name} (${(file.size / 1024 / 1024).toFixed(1)} MB)`;
+  fileNameEl.style.display = 'block';
+  buildBtn.disabled = false;
+}
+
+buildBtn.addEventListener('click', startBuild);
+
+async function startBuild() {
+  if (!selectedFile) return;
+  buildBtn.disabled = true;
+  errorBox.style.display = 'none';
+  downloadRow.style.display = 'none';
+  logPanel.style.display = 'block';
+  logPanel.textContent = '';
+  pipeline.style.display = 'block';
+  setStage('validating', 'active');
+
+  const formData = new FormData();
+  formData.append('zip', selectedFile);
+
+  let jobId;
+  try {
+    const res = await fetch('/api/upload', { method: 'POST', body: formData });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Upload failed.');
+    jobId = data.jobId;
+  } catch (err) {
+    showError(err.message);
+    return;
+  }
+
+  streamLogs(jobId);
+}
+
+function setStage(stage, state) {
+  document.querySelectorAll('.stage-row').forEach((row) => {
+    if (row.dataset.stage === stage) {
+      row.classList.remove('done', 'active', 'failed');
+      row.classList.add(state);
+    } else if (state === 'active' || state === 'done') {
+      // mark earlier stages done
+      const order = ['validating', 'queued', 'building', 'success'];
+      if (order.indexOf(row.dataset.stage) < order.indexOf(stage)) {
+        row.classList.remove('active', 'failed');
+        row.classList.add('done');
+      }
+    }
+  });
+}
+
+function streamLogs(jobId) {
+  const source = new EventSource(`/api/logs/${jobId}/stream`);
+
+  source.onmessage = (e) => {
+    const line = JSON.parse(e.data);
+    logPanel.textContent += line + '\n';
+    logPanel.scrollTop = logPanel.scrollHeight;
+  };
+
+  source.addEventListener('status', (e) => {
+    const { status } = JSON.parse(e.data);
+    if (status === 'queued') setStage('queued', 'active');
+    if (status === 'building') setStage('building', 'active');
+  });
+
+  source.addEventListener('done', (e) => {
+    const { status, error } = JSON.parse(e.data);
+    source.close();
+    if (status === 'success') {
+      setStage('success', 'done');
+      downloadBtn.href = `/api/download/${jobId}`;
+      downloadRow.style.display = 'block';
+    } else {
+      const activeStage = document.querySelector('.stage-row.active');
+      if (activeStage) activeStage.classList.replace('active', 'failed');
+      showError(error || 'Build failed. See the log above for details.');
+    }
+    buildBtn.disabled = false;
+  });
+
+  source.onerror = () => {
+    // EventSource auto-retries; if the job is already finished this is a
+    // harmless close from the server, so just stop listening after a beat.
+  };
+}
+
+function showError(message) {
+  errorBox.textContent = message;
+  errorBox.style.display = 'block';
+  buildBtn.disabled = false;
+}
+</script>
+</body>
+</html>
