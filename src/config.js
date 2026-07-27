@@ -46,4 +46,10 @@ module.exports = {
   JOB_ROOT,
   HOST_JOB_ROOT,
   JOB_TTL_MS: parseInt(process.env.JOB_TTL_MS || `${60 * 60 * 1000}`, 10),
+  // Which origin(s) may call this API from a browser. '*' (default) allows
+  // any origin — fine for a worker with no auth/cookies to leak. Set to a
+  // comma-separated list (e.g. "https://your-app.vercel.app") to lock it
+  // down once the frontend is deployed separately (see web/src/api.js and
+  // the root README's frontend/worker split section).
+  CORS_ORIGIN: process.env.CORS_ORIGIN || '*',
 };

@@ -19,6 +19,7 @@ function createJob() {
     id,
     status: 'queued', // queued -> validating -> building -> success | failed
     logs: [],
+    notices: [],
     error: null,
     createdAt: Date.now(),
     dir,
@@ -36,6 +37,21 @@ function log(job, line) {
   bus.emit(`log:${job.id}`, entry);
 }
 
+// notice(): a structured, UI-visible event — distinct from a plain log line.
+// Emitted when the build dynamically decided or fixed something (matched a
+// package version, installed a missing dependency, patched a config) so the
+// frontend can surface it as a pop-up instead of leaving it buried in logs.
+function notice(job, payload) {
+  const entry = {
+    level: payload.level || 'info',
+    title: payload.title || '',
+    message: payload.message || '',
+    at: new Date().toISOString(),
+  };
+  job.notices.push(entry);
+  bus.emit(`notice:${job.id}`, entry);
+}
+
 function setStatus(job, status, error) {
   job.status = status;
   if (error) job.error = error;
@@ -48,8 +64,10 @@ function setStatus(job, status, error) {
 function purgeJob(job) {
   fs.rm(job.dir, { recursive: true, force: true }, () => {});
   job.logs = [];
+  job.notices = [];
   job.apkPath = null;
   bus.removeAllListeners(`log:${job.id}`);
+  bus.removeAllListeners(`notice:${job.id}`);
   bus.removeAllListeners(`status:${job.id}`);
   bus.removeAllListeners(`done:${job.id}`);
   jobs.delete(job.id);
@@ -63,4 +81,4 @@ setInterval(() => {
   }
 }, 5 * 60 * 1000).unref();
 
-module.exports = { jobs, bus, createJob, log, setStatus, purgeJob };
+module.exports = { jobs, bus, createJob, log, notice, setStatus, purgeJob };

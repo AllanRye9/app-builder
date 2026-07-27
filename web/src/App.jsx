@@ -1,9 +1,10 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import Dropzone from './components/Dropzone.jsx';
 import Pipeline from './components/Pipeline.jsx';
 import LogPanel from './components/LogPanel.jsx';
 import DownloadCard from './components/DownloadCard.jsx';
 import ErrorBanner from './components/ErrorBanner.jsx';
+import ToastStack from './components/ToastStack.jsx';
 import { uploadZip, streamLogs } from './api.js';
 
 const IDLE = 'idle';
@@ -18,6 +19,17 @@ export default function App() {
   const [logs, setLogs] = useState([]);
   const [error, setError] = useState('');
   const [jobId, setJobId] = useState(null);
+  const [notices, setNotices] = useState([]);
+  const nextNoticeId = useRef(0);
+
+  function pushNotice(payload) {
+    nextNoticeId.current += 1;
+    setNotices((prev) => [...prev, { ...payload, id: nextNoticeId.current }]);
+  }
+
+  function dismissNotice(id) {
+    setNotices((prev) => prev.filter((n) => n.id !== id));
+  }
 
   const isBuilding = phase === RUNNING;
 
@@ -27,6 +39,7 @@ export default function App() {
     setPhase(RUNNING);
     setError('');
     setLogs([]);
+    setNotices([]);
     setStage('validating');
     setJobId(null);
 
@@ -42,6 +55,7 @@ export default function App() {
     setJobId(id);
     streamLogs(id, {
       onLog: (line) => setLogs((prev) => [...prev, line]),
+      onNotice: (payload) => pushNotice(payload),
       onStatus: ({ status }) => {
         if (status === 'queued') setStage('queued');
         if (status === 'building') setStage('building');
@@ -60,6 +74,8 @@ export default function App() {
 
   return (
     <main className="app-main">
+      <ToastStack notices={notices} onDismiss={dismissNotice} />
+
       <header className="app-header">
         <div className="eyebrow"><span className="dot" />apk-builder</div>
         <h1>Turn a React project into an APK</h1>
@@ -79,6 +95,7 @@ export default function App() {
             setPhase(IDLE);
             setError('');
             setLogs([]);
+            setNotices([]);
           }}
         />
 

@@ -7,7 +7,7 @@ const {
   DOCKER_IMAGE, BUILD_MEMORY_LIMIT, BUILD_CPU_LIMIT, BUILD_TIMEOUT_MS,
   JOB_ROOT, HOST_JOB_ROOT, MAX_CONCURRENT_BUILDS,
 } = require('./config');
-const { log, setStatus } = require('./jobStore');
+const { log, notice, setStatus } = require('./jobStore');
 
 // Translate a path this process sees (under JOB_ROOT) into the equivalent
 // path on the real Docker host (under HOST_JOB_ROOT). See config.js for why
@@ -18,6 +18,27 @@ const { log, setStatus } = require('./jobStore');
 function toHostPath(containerPath) {
   const relative = path.relative(JOB_ROOT, containerPath);
   return path.join(HOST_JOB_ROOT, relative);
+}
+
+const NOTICE_MARKER = '##NOTICE## ';
+
+// build.sh emits "##NOTICE## <json>" lines for anything it decided or fixed
+// dynamically (a version it matched, a package it installed on the fly).
+// Route those to the structured notice channel instead of plain logging, so
+// the frontend can render them as pop-ups. Anything that isn't a well-formed
+// notice line still gets logged normally.
+function handleOutputLine(job, line) {
+  if (line.startsWith(NOTICE_MARKER)) {
+    try {
+      const payload = JSON.parse(line.slice(NOTICE_MARKER.length));
+      notice(job, payload);
+      return;
+    } catch (err) {
+      // Malformed notice payload — fall through and log the raw line so
+      // nothing silently disappears.
+    }
+  }
+  log(job, line);
 }
 
 function runBuild(job) {
@@ -54,10 +75,10 @@ function runBuild(job) {
     }, BUILD_TIMEOUT_MS);
 
     child.stdout.on('data', (chunk) => {
-      chunk.toString('utf8').split(/\r?\n/).filter(Boolean).forEach((l) => log(job, l));
+      chunk.toString('utf8').split(/\r?\n/).filter(Boolean).forEach((l) => handleOutputLine(job, l));
     });
     child.stderr.on('data', (chunk) => {
-      chunk.toString('utf8').split(/\r?\n/).filter(Boolean).forEach((l) => log(job, l));
+      chunk.toString('utf8').split(/\r?\n/).filter(Boolean).forEach((l) => handleOutputLine(job, l));
     });
 
     child.on('error', (err) => {

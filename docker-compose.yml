@@ -41,6 +41,7 @@ services:
       DOCKER_IMAGE: apk-builder-android:latest
       JOB_ROOT: /workspace/jobs
       HOST_JOB_ROOT: ${PWD}/.jobs
+      CORS_ORIGIN: ${CORS_ORIGIN:-*}
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - ./.jobs:/workspace/jobs

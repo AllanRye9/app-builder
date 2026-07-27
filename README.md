@@ -58,6 +58,43 @@ That's it. This single command:
 Each APK build after that spins up a fresh `apk-builder-android` container on demand, capped on
 CPU/memory, and destroyed when it finishes.
 
+## Dynamic version handling (no hand-maintained pins)
+
+This runs unattended on a server, so nothing about Capacitor's own versioning is hardcoded:
+
+- **Node**: the image ships a Node 22 baseline, but `build.sh` reads the installed Capacitor
+  CLI's own declared `engines.node` requirement at the start of every build and, if it's ever
+  insufficient, installs a newer Node on the fly with `n` and continues — no image rebuild.
+- **Capacitor CLI**: installed at `@latest` in the Dockerfile, deliberately not pinned.
+- **`@capacitor/core` / `@capacitor/android`**: `build.sh` reads whichever CLI version actually
+  landed in the image and installs matching platform packages to that same major version, every
+  build — so these three can never drift out of sync with each other.
+- **Missing-dependency errors** (e.g. `cap add android` refusing to run without
+  `@capacitor/android` installed first): a generic wrapper (`run_cap_step` in `build.sh`) parses
+  any `npm install <package>` suggestion the CLI prints on failure, installs it, and retries once
+  automatically — this isn't special-cased to the Android-platform error specifically, it applies
+  to any Capacitor CLI step that fails with that kind of suggestion.
+
+## Build notifications (pop-ups)
+
+Anything the build decides or fixes dynamically — a version it matched, a package it installed
+on the fly, a permission it patched in, a validation rejection — is emitted as a structured
+**notice**, separate from the scrolling log text:
+
+```
+build.sh  →  "##NOTICE## {\"level\":\"info\",\"title\":\"...\",\"message\":\"...\"}" on stdout
+         →  src/dockerRunner.js parses the marker, calls jobStore.notice()
+         →  src/routes.js forwards it as an SSE "notice" event
+         →  web/src/components/ToastStack.jsx renders it as a dismissible pop-up
+```
+
+Levels are `info`, `warning`, `success`, and `error` (errors don't auto-dismiss). To add a new
+notice from `build.sh`, just call the existing `notice()` shell function:
+
+```bash
+notice "info" "Short title" "Longer explanation of what happened and why."
+```
+
 ## About the `cd: /project: No such file or directory` error
 
 That error means `build.sh` was asked to `cd` into `/project`, but nothing was bind-mounted
@@ -124,6 +161,41 @@ npm start          # terminal 1 — Express API on :3000
 npm run dev:web     # terminal 2 — Vite dev server on :5173, proxies /api to :3000
 ```
 
+## Deploying the frontend on Vercel, Netlify, or any static host
+
+**Only the React app (`web/`) can run on Vercel or a similar serverless/static platform.** The
+build worker cannot, and this isn't a configuration gap — it's a hard platform wall:
+
+- Vercel Serverless Functions cap request/response bodies at **4.5 MB**. This app accepts project
+  archives up to 150 MB by default.
+- Execution time is capped too — 10s on Hobby, up to 800s on Pro/Enterprise with Fluid Compute,
+  never unlimited. A real Android build (`npm install` + Vite build + Gradle `assembleDebug`)
+  routinely takes minutes.
+- There's no Docker daemon available inside a Vercel Function, and nothing to mount a socket into
+  — this app's entire build mechanism is spawning sibling Docker containers.
+
+So the split is: **frontend on Vercel (or Netlify, Cloudflare Pages, GitHub Pages, S3+CloudFront,
+nginx — anything that serves static files)**, **worker on anything with a real, persistent Docker
+daemon** — a VPS, Fly.io, Railway, Render, EC2, or your own machine, using the existing
+`docker-compose.yml` unchanged.
+
+Steps:
+
+1. **Deploy the worker** somewhere with Docker, exactly as described above (`docker compose up
+   --build`). Note its public HTTPS URL, e.g. `https://build.example.com`. Set `CORS_ORIGIN` on
+   the worker (via `.env` or your host's env var settings) to the frontend's eventual origin,
+   e.g. `CORS_ORIGIN=https://your-app.vercel.app`.
+2. **Deploy `web/` to Vercel** (or another static host): in Vercel's project settings, set **Root
+   Directory** to `web`. It auto-detects Vite (a `web/vercel.json` is included for clarity/
+   explicit config). Set the environment variable `VITE_API_BASE_URL` to the worker's URL from
+   step 1 — see `web/.env.example`.
+3. That's it — the deployed frontend talks directly to the worker over CORS for upload, the SSE
+   log stream, and download. Vercel never sees the large upload or the long-running build; it's
+   purely serving static files.
+
+The same two-part split applies to any other host that only offers static file serving (or a
+serverless-functions model) rather than a persistent Docker daemon.
+
 ## Configuration
 
 All optional, set as environment variables (or in a `.env` file — see `.env.example`):
@@ -140,6 +212,13 @@ All optional, set as environment variables (or in a `.env` file — see `.env.ex
 | `JOB_ROOT` | OS temp dir | Where per-job workspaces are extracted (in-container path) |
 | `HOST_JOB_ROOT` | same as `JOB_ROOT` | Real host-side path of `JOB_ROOT`, for DooD bind mounts |
 | `JOB_TTL_MS` | `3600000` (1 hr) | How long a finished job's files stick around before cleanup |
+| `CORS_ORIGIN` | `*` | Origin(s) allowed to call this worker's API cross-origin (comma-separated); set when the frontend is hosted separately |
+
+Frontend-side (set in `web/.env` / `web/.env.production`, or your static host's env var settings):
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `VITE_API_BASE_URL` | unset (same-origin) | Worker's full URL, when the frontend is deployed separately (Vercel, etc.) |
 
 ## What gets validated before a build ever starts
 

@@ -4,3 +4,6 @@ npm-debug.log
 web/node_modules
 web/dist
 .env
+web/.env
+web/.env.local
+web/.env.production

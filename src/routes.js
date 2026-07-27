@@ -5,7 +5,7 @@ const multer = require('multer');
 const fs = require('fs');
 const path = require('path');
 const { MAX_UPLOAD_BYTES, JOB_ROOT } = require('./config');
-const { jobs, bus, createJob, log, setStatus, purgeJob } = require('./jobStore');
+const { jobs, bus, createJob, log, notice, setStatus, purgeJob } = require('./jobStore');
 const { validateAndExtract, ValidationError } = require('./validate');
 const { enqueue } = require('./dockerRunner');
 
@@ -40,6 +40,7 @@ router.post('/upload', upload.single('zip'), (req, res) => {
     if (err instanceof ValidationError) {
       setStatus(job, 'failed', err.message);
       log(job, `Validation failed: ${err.message}`);
+      notice(job, { level: 'error', title: 'Archive rejected', message: err.message });
       return res.status(202).json({ jobId: job.id }); // still trackable via status endpoint
     }
     setStatus(job, 'failed', 'Unexpected server error during validation.');
@@ -56,6 +57,7 @@ router.get('/status/:jobId', (req, res) => {
     status: job.status,
     error: job.error,
     logs: job.logs,
+    notices: job.notices,
     downloadReady: job.status === 'success' && !!job.apkPath,
   });
 });
@@ -74,9 +76,11 @@ router.get('/logs/:jobId/stream', (req, res) => {
 
   // Replay what's already happened, then stream new lines.
   job.logs.forEach((line) => res.write(`data: ${JSON.stringify(line)}\n\n`));
+  job.notices.forEach((n) => res.write(`event: notice\ndata: ${JSON.stringify(n)}\n\n`));
   res.write(`event: status\ndata: ${JSON.stringify({ status: job.status })}\n\n`);
 
   const onLog = (line) => res.write(`data: ${JSON.stringify(line)}\n\n`);
+  const onNotice = (payload) => res.write(`event: notice\ndata: ${JSON.stringify(payload)}\n\n`);
   const onStatus = (payload) => res.write(`event: status\ndata: ${JSON.stringify(payload)}\n\n`);
   const onDone = (payload) => {
     res.write(`event: done\ndata: ${JSON.stringify(payload)}\n\n`);
@@ -86,11 +90,13 @@ router.get('/logs/:jobId/stream', (req, res) => {
 
   function cleanupListeners() {
     bus.off(`log:${job.id}`, onLog);
+    bus.off(`notice:${job.id}`, onNotice);
     bus.off(`status:${job.id}`, onStatus);
     bus.off(`done:${job.id}`, onDone);
   }
 
   bus.on(`log:${job.id}`, onLog);
+  bus.on(`notice:${job.id}`, onNotice);
   bus.on(`status:${job.id}`, onStatus);
   bus.on(`done:${job.id}`, onDone);
 
