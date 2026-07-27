@@ -5,7 +5,7 @@ const path = require('path');
 const { spawn } = require('child_process');
 const {
   DOCKER_IMAGE, BUILD_MEMORY_LIMIT, BUILD_CPU_LIMIT, BUILD_TIMEOUT_MS,
-  JOB_ROOT, HOST_JOB_ROOT,
+  JOB_ROOT, HOST_JOB_ROOT, MAX_CONCURRENT_BUILDS,
 } = require('./config');
 const { log, setStatus } = require('./jobStore');
 
@@ -86,7 +86,6 @@ function runBuild(job) {
 // ---------------------------------------------------------------------------
 // Bounded-concurrency queue
 // ---------------------------------------------------------------------------
-const { MAX_CONCURRENT_BUILDS } = require('./config');
 const queue = [];
 let running = 0;
 

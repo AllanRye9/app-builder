@@ -50,7 +50,7 @@ docker compose up --build
 That's it. This single command:
 
 1. Builds `apk-builder-android` — the Android/Capacitor build environment (JDK 17, Android SDK,
-   Gradle, Node 20, Capacitor CLI). It's only ever *built*, never run as a long-lived container —
+   Gradle, Node 22, Capacitor CLI). It's only ever *built*, never run as a long-lived container —
    `docker compose` builds the image and exits immediately, satisfying it as a dependency.
 2. Builds `apk-builder-app` — the React frontend plus the Express server — and starts it.
 3. Serves the UI at **http://localhost:3000**.
