@@ -77,6 +77,17 @@ if [ ! -f capacitor.config.json ] && [ ! -f capacitor.config.ts ]; then
   npx --yes cap init "$APP_NAME" "$APP_ID" --web-dir "$WEB_DIR"
 fi
 
+echo "--- Installing Capacitor Android platform package ---"
+# Newer Capacitor CLI versions (unlike older ones) no longer auto-install the
+# platform package during `cap add android` — it must already be a project
+# dependency, or the CLI fails with:
+#   [error] Could not find the android platform.
+#   You must install it in your project first, e.g. w/ npm install @capacitor/android
+# Pin to the same major version as the globally installed CLI (see the
+# Dockerfile) so core/android/cli versions can't drift apart.
+CAPACITOR_MAJOR="${CAPACITOR_MAJOR:-7}"
+npm install --no-save "@capacitor/core@$CAPACITOR_MAJOR" "@capacitor/android@$CAPACITOR_MAJOR"
+
 echo "--- Adding Android platform ---"
 rm -rf android
 npx --yes cap add android
