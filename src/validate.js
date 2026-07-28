@@ -10,14 +10,23 @@ const FORBIDDEN_TOP_LEVEL = new Set([
   'android', 'ios', 'platforms', 'capacitor.config.json', 'capacitor.config.ts',
 ]);
 
-// Only allow project-source-like file extensions through. Anything else in
-// the archive causes rejection rather than silent stripping, so the user
-// knows exactly why a build was refused.
+// Only these file types are trusted to build the web app itself. Anything
+// else in the archive (native-platform config like proguard-rules.pro,
+// editor/OS cruft, license files, whatever) is simply skipped rather than
+// failing the whole upload — none of it is needed to build the APK, since
+// the native android/ project is generated fresh every build regardless of
+// what was in the zip.
 const ALLOWED_EXTENSIONS = new Set([
   '.js', '.jsx', '.ts', '.tsx', '.json', '.css', '.scss', '.sass', '.less',
   '.html', '.htm', '.md', '.mjs', '.cjs', '.svg', '.png', '.jpg', '.jpeg',
   '.gif', '.webp', '.ico', '.woff', '.woff2', '.ttf', '.eot', '.txt',
   '.env.example', '.gitignore', '.npmrc', '.yml', '.yaml', '.lock',
+]);
+
+// Filenames (not extensions) that are also fine to skip past — no extension,
+// or an extension that's ambiguous outside this specific name.
+const ALLOWED_BASENAMES = new Set([
+  'license', 'license.md', 'license.txt', 'readme', 'dockerfile',
 ]);
 
 function isSafeEntryName(name) {
@@ -26,6 +35,13 @@ function isSafeEntryName(name) {
   const normalized = path.normalize(name);
   if (normalized.startsWith('..') || path.isAbsolute(normalized)) return false;
   return true;
+}
+
+function isAllowedFile(entryName) {
+  const base = path.basename(entryName).toLowerCase();
+  if (ALLOWED_BASENAMES.has(base)) return true;
+  const ext = path.extname(entryName).toLowerCase();
+  return !ext || ALLOWED_EXTENSIONS.has(ext);
 }
 
 function validateAndExtract(zipPath, destDir) {
@@ -37,6 +53,8 @@ function validateAndExtract(zipPath, destDir) {
   }
 
   let hasPackageJson = false;
+  const skipped = [];
+  const toExtract = [];
 
   for (const entry of entries) {
     const entryName = entry.entryName.replace(/\\/g, '/');
@@ -60,11 +78,15 @@ function validateAndExtract(zipPath, destDir) {
       if (parts.length <= 2) hasPackageJson = true;
     }
 
-    if (!entry.isDirectory) {
-      const ext = path.extname(entryName).toLowerCase();
-      if (ext && !ALLOWED_EXTENSIONS.has(ext)) {
-        throw new ValidationError(`Disallowed file type in archive: ${entryName}`);
-      }
+    if (entry.isDirectory) {
+      toExtract.push(entry);
+      continue;
+    }
+
+    if (isAllowedFile(entryName)) {
+      toExtract.push(entry);
+    } else {
+      skipped.push(entryName);
     }
   }
 
@@ -73,7 +95,9 @@ function validateAndExtract(zipPath, destDir) {
   }
 
   fs.mkdirSync(destDir, { recursive: true });
-  zip.extractAllTo(destDir, true);
+  for (const entry of toExtract) {
+    zip.extractEntryTo(entry, destDir, true, true);
+  }
 
   // If the zip wrapped everything in a single top-level folder, flatten it
   // so package.json ends up directly inside destDir.
@@ -91,6 +115,8 @@ function validateAndExtract(zipPath, destDir) {
   if (!fs.existsSync(path.join(destDir, 'package.json'))) {
     throw new ValidationError('package.json not found after extraction.');
   }
+
+  return { skipped };
 }
 
 module.exports = { validateAndExtract, ValidationError };

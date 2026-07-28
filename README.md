@@ -231,9 +231,9 @@ Frontend-side (set in `web/.env` / `web/.env.production`, or your static host's 
 ## What gets validated before a build ever starts
 
 - Archive must contain a root-level `package.json`.
-- Archive is rejected if it already contains `android/`, `ios/`, `platforms/`, `capacitor.config.json`, or `capacitor.config.ts` — the build generates the native project itself.
-- Every file entry is checked against an allowlist of source-file extensions (`.js`, `.ts`, `.tsx`, `.css`, `.json`, images, fonts, etc.) — anything outside that list fails validation rather than being silently dropped.
-- Zip-slip protection: any entry path that resolves outside the extraction directory is rejected.
+- Archive is rejected outright if it already contains `android/`, `ios/`, `platforms/`, `capacitor.config.json`, or `capacitor.config.ts` — the build generates the native project itself, so a pre-existing one is a conflict, not just noise.
+- Every other file is checked against an allowlist of source-file extensions (`.js`, `.ts`, `.tsx`, `.css`, `.json`, images, fonts, etc.). Anything **not** on that list — `proguard-rules.pro`, editor/OS cruft, license files, whatever — is simply **left out of the extracted project** rather than failing the whole upload; none of it is needed to build the APK, since the native `android/` project is regenerated fresh every build regardless of what was in the zip. Skipped files are listed in the build log and summarized as an info toast.
+- Zip-slip protection: any entry path that resolves outside the extraction directory is rejected (this one still fails the whole upload — it's a safety check, not a convenience filter).
 
 ## API
 

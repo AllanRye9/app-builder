@@ -72,8 +72,19 @@ router.post('/upload', rateLimit, upload.single('zip'), (req, res) => {
   log(job, `Received ${req.file.originalname} (${(req.file.size / 1024 / 1024).toFixed(1)} MB).`);
 
   try {
-    validateAndExtract(req.file.path, job.projectDir);
+    const { skipped } = validateAndExtract(req.file.path, job.projectDir);
     log(job, 'Validation passed: plain React/Capacitor-ready project detected.');
+    if (skipped.length > 0) {
+      log(job, `Skipped ${skipped.length} file(s) not needed to build the app: ${skipped.join(', ')}`);
+      notice(job, {
+        level: 'info',
+        title: `Skipped ${skipped.length} unused file${skipped.length === 1 ? '' : 's'}`,
+        message:
+          skipped.length <= 3
+            ? `Not needed to build the app, so left out: ${skipped.join(', ')}.`
+            : `Not needed to build the app, so left out: ${skipped.slice(0, 3).join(', ')}, and ${skipped.length - 3} more. See the build log for the full list.`,
+      });
+    }
     fs.unlink(req.file.path, () => {});
     enqueue(job);
     return res.status(202).json({ jobId: job.id });
