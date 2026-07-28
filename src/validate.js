@@ -20,13 +20,22 @@ const ALLOWED_EXTENSIONS = new Set([
   '.js', '.jsx', '.ts', '.tsx', '.json', '.css', '.scss', '.sass', '.less',
   '.html', '.htm', '.md', '.mjs', '.cjs', '.svg', '.png', '.jpg', '.jpeg',
   '.gif', '.webp', '.ico', '.woff', '.woff2', '.ttf', '.eot', '.txt',
-  '.env.example', '.gitignore', '.npmrc', '.yml', '.yaml', '.lock',
+  '.gitignore', '.npmrc', '.yml', '.yaml', '.lock',
+  // Media assets — common in real-world apps (splash videos, sound effects,
+  // etc.) and otherwise silently dropped, which just trades a build failure
+  // for a broken-looking app.
+  '.mp4', '.webm', '.mov', '.mp3', '.wav', '.ogg', '.m4a', '.pdf',
 ]);
 
 // Filenames (not extensions) that are also fine to skip past — no extension,
-// or an extension that's ambiguous outside this specific name.
+// or an extension that's ambiguous/misleading outside this specific name.
+// path.extname('.env.example') is '.example', not '.env.example' (Node
+// treats the part after the first dot in a dotfile as the "name"), so an
+// entry in ALLOWED_EXTENSIONS for '.env.example' would never actually
+// match anything — matching on the full basename here is the correct fix.
 const ALLOWED_BASENAMES = new Set([
   'license', 'license.md', 'license.txt', 'readme', 'dockerfile',
+  '.env.example', '.env.sample',
 ]);
 
 function isSafeEntryName(name) {

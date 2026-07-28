@@ -46,7 +46,7 @@ module.exports = {
   BUILD_MEMORY_LIMIT: process.env.BUILD_MEMORY_LIMIT || '2g',
   BUILD_CPU_LIMIT: process.env.BUILD_CPU_LIMIT || '2',
   BUILD_TIMEOUT_MS: parseInt(process.env.BUILD_TIMEOUT_MS || `${15 * 60 * 1000}`, 10),
-  MAX_UPLOAD_BYTES: parseInt(process.env.MAX_UPLOAD_BYTES || `${150 * 1024 * 1024}`, 10),
+  MAX_UPLOAD_BYTES: parseInt(process.env.MAX_UPLOAD_BYTES || `${300 * 1024 * 1024}`, 10),
   JOB_ROOT,
   HOST_JOB_ROOT,
   JOB_TTL_MS: parseInt(process.env.JOB_TTL_MS || `${60 * 60 * 1000}`, 10),

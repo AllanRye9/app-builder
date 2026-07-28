@@ -214,7 +214,7 @@ All optional, set as environment variables (or in a `.env` file — see `.env.ex
 | `BUILD_MEMORY_LIMIT` | `2g` | `--memory` cap passed to `docker run` |
 | `BUILD_CPU_LIMIT` | `2` | `--cpus` cap passed to `docker run` |
 | `BUILD_TIMEOUT_MS` | `900000` (15 min) | Kill the container if a build hangs |
-| `MAX_UPLOAD_BYTES` | `157286400` (150 MB) | Max accepted zip size |
+| `MAX_UPLOAD_BYTES` | `314572800` (300 MB) | Max accepted zip size |
 | `JOB_ROOT` | OS temp dir | Where per-job workspaces are extracted (in-container path) |
 | `HOST_JOB_ROOT` | same as `JOB_ROOT` | Real host-side path of `JOB_ROOT`, for DooD bind mounts |
 | `JOB_TTL_MS` | `3600000` (1 hr) | How long a finished job's files stick around before cleanup |
