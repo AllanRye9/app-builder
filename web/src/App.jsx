@@ -1,126 +1,179 @@
-import { useRef, useState } from 'react';
+import { useCallback, useRef, useState } from 'react';
 import Dropzone from './components/Dropzone.jsx';
-import Pipeline from './components/Pipeline.jsx';
-import LogPanel from './components/LogPanel.jsx';
-import DownloadCard from './components/DownloadCard.jsx';
-import ErrorBanner from './components/ErrorBanner.jsx';
+import JobTicket from './components/JobTicket.jsx';
 import ToastStack from './components/ToastStack.jsx';
-import { uploadZip, streamLogs } from './api.js';
+import { uploadZip } from './api.js';
 
-const IDLE = 'idle';
-const RUNNING = 'running';
-const DONE_SUCCESS = 'success';
-const DONE_FAILED = 'failed';
+let nextTempId = 0;
 
 export default function App() {
-  const [selectedFile, setSelectedFile] = useState(null);
-  const [phase, setPhase] = useState(IDLE); // idle | running | success | failed
-  const [stage, setStage] = useState('validating');
-  const [logs, setLogs] = useState([]);
-  const [error, setError] = useState('');
-  const [jobId, setJobId] = useState(null);
+  // Each entry: { tempId, id, fileName, fileSize, status, error, queuePosition, downloadReady }
+  // tempId exists from the moment a file is picked (client-side, before the
+  // server has assigned a real job id) so the card can appear instantly
+  // while the upload is still in flight — the whole point of a
+  // multi-tasking dashboard is that starting build #2 never waits on #1.
+  const [jobs, setJobs] = useState([]);
   const [notices, setNotices] = useState([]);
   const nextNoticeId = useRef(0);
+  const notifyAsked = useRef(false);
 
-  function pushNotice(payload) {
+  const pushToast = useCallback((payload) => {
     nextNoticeId.current += 1;
     setNotices((prev) => [...prev, { ...payload, id: nextNoticeId.current }]);
-  }
+  }, []);
 
-  function dismissNotice(id) {
+  const dismissToast = useCallback((id) => {
     setNotices((prev) => prev.filter((n) => n.id !== id));
+  }, []);
+
+  function patchJob(tempId, patch) {
+    setJobs((prev) => prev.map((j) => (j.tempId === tempId ? { ...j, ...patch } : j)));
   }
 
-  const isBuilding = phase === RUNNING;
+  function removeJob(tempId) {
+    setJobs((prev) => prev.filter((j) => j.tempId !== tempId));
+  }
 
-  async function startBuild() {
-    if (!selectedFile) return;
-
-    setPhase(RUNNING);
-    setError('');
-    setLogs([]);
-    setNotices([]);
-    setStage('validating');
-    setJobId(null);
-
-    let id;
-    try {
-      id = await uploadZip(selectedFile);
-    } catch (err) {
-      setError(err.message);
-      setPhase(DONE_FAILED);
-      return;
+  async function ensureNotifyPermission() {
+    if (notifyAsked.current) return;
+    notifyAsked.current = true;
+    if ('Notification' in window && Notification.permission === 'default') {
+      try {
+        await Notification.requestPermission();
+      } catch {
+        // Some browsers/contexts (e.g. insecure origins) reject this — the
+        // in-app toast stack still covers completion either way.
+      }
     }
+  }
 
-    setJobId(id);
-    streamLogs(id, {
-      onLog: (line) => setLogs((prev) => [...prev, line]),
-      onNotice: (payload) => pushNotice(payload),
-      onStatus: ({ status }) => {
-        if (status === 'queued') setStage('queued');
-        if (status === 'building') setStage('building');
-      },
-      onDone: ({ status, error: doneError }) => {
-        if (status === 'success') {
-          setStage('success');
-          setPhase(DONE_SUCCESS);
-        } else {
-          setPhase(DONE_FAILED);
-          setError(doneError || 'Build failed. See the log above for details.');
-        }
-      },
+  function handleFilesSelected(files) {
+    ensureNotifyPermission();
+    files.forEach((file) => {
+      const tempId = `t${nextTempId++}`;
+      setJobs((prev) => [
+        {
+          tempId,
+          id: null,
+          fileName: file.name,
+          fileSize: file.size,
+          status: 'uploading',
+          error: null,
+          queuePosition: null,
+          downloadReady: false,
+        },
+        ...prev,
+      ]);
+
+      uploadZip(file)
+        .then((jobId) => patchJob(tempId, { id: jobId, status: 'validating' }))
+        .catch((err) => {
+          patchJob(tempId, { status: 'failed', error: err.message });
+          pushToast({ level: 'error', title: `${file.name} rejected`, message: err.message });
+        });
     });
   }
 
-  return (
-    <main className="app-main">
-      <ToastStack notices={notices} onDismiss={dismissNotice} />
+  function handleJobDone(tempId, fileName, status, error) {
+    if (status === 'success') {
+      pushToast({ level: 'success', title: 'Build complete', message: `${fileName} is ready to download.` });
+      notifyBrowser('Build complete', `${fileName} is ready to download.`);
+    } else {
+      const message = error || `${fileName} failed to build.`;
+      pushToast({ level: 'error', title: 'Build failed', message });
+      notifyBrowser('Build failed', message);
+    }
+  }
 
-      <header className="app-header">
-        <div className="eyebrow"><span className="dot" />apk-builder</div>
-        <h1>Turn a React project into an APK</h1>
+  const counts = jobs.reduce(
+    (acc, j) => {
+      if (j.status === 'building') acc.building += 1;
+      else if (j.status === 'success') acc.done += 1;
+      else if (j.status === 'failed') acc.failed += 1;
+      else acc.queued += 1; // uploading | validating | queued
+      return acc;
+    },
+    { building: 0, queued: 0, done: 0, failed: 0 }
+  );
+
+  return (
+    <main className="app-shell">
+      <ToastStack notices={notices} onDismiss={dismissToast} />
+
+      <header className="floor-header">
+        <div className="eyebrow"><span className="dot" />apk-builder — build floor</div>
+        <h1>Turn React projects into APKs, all at once</h1>
         <p className="sub">
-          Upload a .zip of a plain React (or Capacitor-ready) project. It's built inside an
-          isolated, disposable Docker container with a pre-configured Android SDK — nothing runs
-          on your machine.
+          Drop in as many project archives as you like. Each one runs in its own isolated,
+          disposable container with a pre-configured Android SDK — nothing runs on your machine,
+          and nothing here waits in line behind anything else.
         </p>
       </header>
 
-      <div className="card">
-        <Dropzone
-          selectedFile={selectedFile}
-          disabled={isBuilding}
-          onFileSelected={(file) => {
-            setSelectedFile(file);
-            setPhase(IDLE);
-            setError('');
-            setLogs([]);
-            setNotices([]);
-          }}
-        />
+      <Dropzone onFilesSelected={handleFilesSelected} />
 
-        <button
-          className="build-btn"
-          disabled={!selectedFile || isBuilding}
-          onClick={startBuild}
-        >
-          {isBuilding ? 'Building…' : 'Build APK'}
-        </button>
+      {jobs.length > 0 && (
+        <div className="stats-bar" aria-label="Build floor summary">
+          <Stat value={counts.building} label="building" tone="active" />
+          <Stat value={counts.queued} label="waiting" tone="queued" />
+          <Stat value={counts.done} label="done" tone="done" />
+          {counts.failed > 0 && <Stat value={counts.failed} label="failed" tone="failed" />}
+        </div>
+      )}
 
-        {phase !== IDLE && (
-          <Pipeline activeStage={stage} failed={phase === DONE_FAILED} />
+      <div className="ticket-list">
+        {jobs.length === 0 ? (
+          <div className="empty-floor">
+            <div className="empty-floor-glyph" aria-hidden="true">
+              <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                <rect x="3.5" y="5.5" width="17" height="13" rx="1.5" stroke="currentColor" strokeWidth="1.4" />
+                <path d="M3.5 9.5h17" stroke="currentColor" strokeWidth="1.4" />
+                <path d="M7 7.2h.01M9.4 7.2h.01" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
+              </svg>
+            </div>
+            <div className="empty-floor-title">The floor is empty</div>
+            <div className="empty-floor-sub">Drop a project above to start your first build.</div>
+          </div>
+        ) : (
+          jobs.map((job) => (
+            <JobTicket
+              key={job.tempId}
+              job={job}
+              onUpdate={(patch) => patchJob(job.tempId, patch)}
+              onDone={(status, error) => handleJobDone(job.tempId, job.fileName, status, error)}
+              onNotice={pushToast}
+              onRemove={() => removeJob(job.tempId)}
+            />
+          ))
         )}
-
-        {logs.length > 0 && <LogPanel lines={logs} live={isBuilding} />}
-
-        <ErrorBanner message={phase === DONE_FAILED ? error : ''} />
-
-        {phase === DONE_SUCCESS && jobId && <DownloadCard jobId={jobId} />}
       </div>
 
       <footer className="app-footer">
-        Builds run with capped CPU/memory in an ephemeral container that's destroyed after each job.
+        Builds run with capped CPU/memory in ephemeral containers, destroyed after each job.
       </footer>
     </main>
   );
+}
+
+function Stat({ value, label, tone }) {
+  return (
+    <div className={`stat stat-${tone}`}>
+      <span className="stat-value">{value}</span>
+      <span className="stat-label">{label}</span>
+    </div>
+  );
+}
+
+// Best-effort OS-level notification for when the tab is backgrounded — the
+// in-app toast already covers the foreground case. Silently does nothing
+// anywhere this isn't supported or permitted; never blocks the build flow.
+function notifyBrowser(title, body) {
+  if (!('Notification' in window) || Notification.permission !== 'granted') return;
+  if (document.visibilityState === 'visible' && document.hasFocus()) return;
+  try {
+    // eslint-disable-next-line no-new
+    new Notification(title, { body });
+  } catch {
+    // Some browsers require a service worker for this — fine to skip.
+  }
 }

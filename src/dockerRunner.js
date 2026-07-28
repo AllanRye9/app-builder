@@ -7,7 +7,7 @@ const {
   DOCKER_IMAGE, BUILD_MEMORY_LIMIT, BUILD_CPU_LIMIT, BUILD_TIMEOUT_MS,
   JOB_ROOT, HOST_JOB_ROOT, MAX_CONCURRENT_BUILDS,
 } = require('./config');
-const { log, notice, setStatus } = require('./jobStore');
+const { log, notice, setStatus, setQueuePosition } = require('./jobStore');
 
 // Translate a path this process sees (under JOB_ROOT) into the equivalent
 // path on the real Docker host (under HOST_JOB_ROOT). See config.js for why
@@ -112,17 +112,28 @@ let running = 0;
 
 function enqueue(job) {
   queue.push(job);
-  log(job, `Queued (position ${queue.length}).`);
   pump();
+  broadcastQueuePositions();
+}
+
+// Re-announce every waiting job's position after any change (a build
+// started, a build finished, a new one joined the back of the line) so the
+// dashboard can show "3rd in line" and have it count down live, rather than
+// a single static "queued" state — the difference that matters once
+// several builds can be running and several more waiting at once.
+function broadcastQueuePositions() {
+  queue.forEach((job, i) => setQueuePosition(job, i + 1));
 }
 
 function pump() {
   while (running < MAX_CONCURRENT_BUILDS && queue.length > 0) {
     const job = queue.shift();
     running += 1;
+    setQueuePosition(job, 0);
     runBuild(job).finally(() => {
       running -= 1;
       pump();
+      broadcastQueuePositions();
     });
   }
 }

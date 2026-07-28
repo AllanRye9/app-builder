@@ -1,16 +1,18 @@
 # apk-builder
 
-Upload a `.zip` of a React (or Capacitor-ready) project → get back a downloadable debug APK.
-Every build runs inside a disposable, resource-capped Docker container with a pre-configured
-Android SDK, so licenses, `ANDROID_SDK_ROOT`, and Gradle are already sorted — nothing to
-configure per build.
+Drop in `.zip` files of a React (or Capacitor-ready) project → get back a downloadable debug APK
+for each one. The dashboard tracks as many builds as you start at once — each is its own
+independent job, queued and built without waiting on any other. Every build runs inside a
+disposable, resource-capped Docker container with a pre-configured Android SDK, so licenses,
+`ANDROID_SDK_ROOT`, and Gradle are already sorted — nothing to configure per build.
 
 ```
-Browser (React app, web/)
-   │  upload .zip, watch live logs over SSE
+Browser (React dashboard, web/)
+   │  drop N .zips → each becomes its own tracked job/ticket
+   │  live per-job logs + queue position over SSE, toast on completion/error
    ▼
 Express backend (src/)
-   │  validate zip → extract → queue → spawn `docker run`
+   │  validate zip → extract → bounded queue (MAX_CONCURRENT_BUILDS) → spawn `docker run`
    ▼
 Ephemeral Docker container (docker/android-build/)
    │  npm install → npm run build → cap add android → gradlew assembleDebug
@@ -27,15 +29,15 @@ apk-builder/
 ├── src/                        # Express backend
 │   ├── index.js                #   entry point
 │   ├── config.js               #   env-driven settings (incl. HOST_JOB_ROOT, see below)
-│   ├── jobStore.js             #   in-memory job records + log/event bus
+│   ├── jobStore.js             #   in-memory job records + log/event bus + queue position
 │   ├── validate.js             #   zip validation & safe extraction
-│   ├── dockerRunner.js         #   spawns the sibling build container
-│   └── routes.js               #   /api/upload, /api/status, /api/logs, /api/download
-├── web/                         # React frontend (Vite)
+│   ├── dockerRunner.js         #   bounded-concurrency queue, spawns the sibling build container
+│   └── routes.js               #   /api/upload, /api/status, /api/logs, /api/download, rate limiting
+├── web/                         # React frontend (Vite) — multi-job dashboard
 │   └── src/
-│       ├── App.jsx
+│       ├── App.jsx             #   job list, stats bar, notification permission
 │       ├── api.js
-│       └── components/         #   Dropzone, Pipeline, LogPanel, DownloadCard, ErrorBanner
+│       └── components/         #   Dropzone, JobTicket, Pipeline, LogPanel, DownloadCard, ErrorBanner, ToastStack
 └── docker/android-build/       # the Android/Capacitor build image
     ├── Dockerfile
     └── build.sh
@@ -49,31 +51,35 @@ docker compose up --build
 
 That's it. This single command:
 
-1. Builds `apk-builder-android` — the Android/Capacitor build environment (JDK 17, Android SDK,
-   Gradle, Node 22, Capacitor CLI). It's only ever *built*, never run as a long-lived container —
-   `docker compose` builds the image and exits immediately, satisfying it as a dependency.
+1. Builds `apk-builder-android` — the Android/Capacitor build environment (JDK 21, Android SDK,
+   Gradle wrapper, Node 22, Capacitor CLI). It's only ever *built*, never run as a long-lived
+   container — `docker compose` builds the image and exits immediately, satisfying it as a
+   dependency.
 2. Builds `apk-builder-app` — the React frontend plus the Express server — and starts it.
 3. Serves the UI at **http://localhost:3000**.
 
 Each APK build after that spins up a fresh `apk-builder-android` container on demand, capped on
 CPU/memory, and destroyed when it finishes.
 
-## Dynamic version handling (no hand-maintained pins)
+## Version pinning (deliberate, not dynamic)
 
-This runs unattended on a server, so nothing about Capacitor's own versioning is hardcoded:
+This used to chase `@latest` for Capacitor and auto-detect/switch JDKs at runtime. Both were
+removed after repeated, confusing build failures traced back to exactly that kind of implicit
+drift — an unannounced Capacitor release, or a stale image after an edit, silently changing what
+the build required. Everything relevant is now pinned explicitly, in one place each:
 
-- **Node**: the image ships a Node 22 baseline, but `build.sh` reads the installed Capacitor
-  CLI's own declared `engines.node` requirement at the start of every build and, if it's ever
-  insufficient, installs a newer Node on the fly with `n` and continues — no image rebuild.
-- **Capacitor CLI**: installed at `@latest` in the Dockerfile, deliberately not pinned.
-- **`@capacitor/core` / `@capacitor/android`**: `build.sh` reads whichever CLI version actually
-  landed in the image and installs matching platform packages to that same major version, every
-  build — so these three can never drift out of sync with each other.
-- **Missing-dependency errors** (e.g. `cap add android` refusing to run without
-  `@capacitor/android` installed first): a generic wrapper (`run_cap_step` in `build.sh`) parses
-  any `npm install <package>` suggestion the CLI prints on failure, installs it, and retries once
-  automatically — this isn't special-cased to the Android-platform error specifically, it applies
-  to any Capacitor CLI step that fails with that kind of suggestion.
+- **JDK**: 21 only (`docker/android-build/Dockerfile`). `capacitor-android`'s own `build.gradle`
+  has required JDK 21 since Capacitor 7.0.1 (see [ionic-team/capacitor#7879](https://github.com/ionic-team/capacitor/issues/7879))
+  and still does on the 8.x line, so this isn't a moving target. `build.sh` checks its own Java
+  version in the first second of every build and fails immediately, with the exact fix command, if
+  it's ever wrong — almost always meaning the image is stale and needs `docker compose build
+  --no-cache android-build-image`.
+- **Capacitor**: CLI pinned to major version 7 in the Dockerfile (`npm install -g
+  @capacitor/cli@7`); `build.sh` installs `@capacitor/core`/`@capacitor/android` at the same
+  major (`CAPACITOR_MAJOR`, default `7`) so the three packages can't drift apart from each other.
+  Bump `CAPACITOR_MAJOR` (and re-verify the JDK requirement above) deliberately when you want to
+  move to Capacitor 8.
+- **Node**: fixed at 22 in the Dockerfile — Capacitor's CLI requires it.
 
 ## Build notifications (pop-ups)
 
@@ -204,7 +210,7 @@ All optional, set as environment variables (or in a `.env` file — see `.env.ex
 |---|---|---|
 | `PORT` | `3000` | HTTP port |
 | `DOCKER_IMAGE` | `apk-builder-android:latest` | Image tag to run per build |
-| `MAX_CONCURRENT_BUILDS` | `1` | How many Docker builds run in parallel |
+| `MAX_CONCURRENT_BUILDS` | `3` | How many Docker builds run in parallel |
 | `BUILD_MEMORY_LIMIT` | `2g` | `--memory` cap passed to `docker run` |
 | `BUILD_CPU_LIMIT` | `2` | `--cpus` cap passed to `docker run` |
 | `BUILD_TIMEOUT_MS` | `900000` (15 min) | Kill the container if a build hangs |
@@ -213,6 +219,8 @@ All optional, set as environment variables (or in a `.env` file — see `.env.ex
 | `HOST_JOB_ROOT` | same as `JOB_ROOT` | Real host-side path of `JOB_ROOT`, for DooD bind mounts |
 | `JOB_TTL_MS` | `3600000` (1 hr) | How long a finished job's files stick around before cleanup |
 | `CORS_ORIGIN` | `*` | Origin(s) allowed to call this worker's API cross-origin (comma-separated); set when the frontend is hosted separately |
+| `RATE_LIMIT_MAX` | `10` | Max uploads a single IP may start within `RATE_LIMIT_WINDOW_MS` |
+| `RATE_LIMIT_WINDOW_MS` | `600000` (10 min) | Sliding window for the rate limit above |
 
 Frontend-side (set in `web/.env` / `web/.env.production`, or your static host's env var settings):
 

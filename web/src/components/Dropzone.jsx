@@ -1,24 +1,37 @@
 import { useRef, useState } from 'react';
 
-export default function Dropzone({ selectedFile, onFileSelected, disabled }) {
+// Persistent upload control — stays active at all times (never disabled
+// while other builds are running) and accepts multiple archives in one
+// drop/selection, since starting a new build no longer has to wait for an
+// existing one to finish.
+export default function Dropzone({ onFilesSelected }) {
   const inputRef = useRef(null);
   const [dragging, setDragging] = useState(false);
+  const [rejected, setRejected] = useState('');
 
   function handleFiles(fileList) {
-    const file = fileList?.[0];
-    if (!file) return;
-    if (!file.name.toLowerCase().endsWith('.zip')) {
-      window.alert('Please select a .zip archive.');
+    const files = Array.from(fileList || []);
+    if (files.length === 0) return;
+
+    const zips = files.filter((f) => f.name.toLowerCase().endsWith('.zip'));
+    if (zips.length === 0) {
+      setRejected('Only .zip archives are accepted.');
       return;
     }
-    onFileSelected(file);
+    setRejected('');
+    onFilesSelected(zips);
+    if (inputRef.current) inputRef.current.value = '';
   }
 
   return (
-    <>
+    <div>
       <div
         className={`dropzone${dragging ? ' drag' : ''}`}
-        onClick={() => !disabled && inputRef.current?.click()}
+        onClick={() => inputRef.current?.click()}
+        onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') inputRef.current?.click(); }}
+        role="button"
+        tabIndex={0}
+        aria-label="Add project archives"
         onDragOver={(e) => { e.preventDefault(); setDragging(true); }}
         onDragLeave={() => setDragging(false)}
         onDrop={(e) => {
@@ -27,22 +40,25 @@ export default function Dropzone({ selectedFile, onFileSelected, disabled }) {
           handleFiles(e.dataTransfer.files);
         }}
       >
-        <div className="icon">[ .zip ]</div>
-        <div className="primary">Drop your project archive here</div>
-        <div className="secondary">or click to browse — package.json required, no android/ios folders</div>
+        <div className="dropzone-glyph" aria-hidden="true">
+          <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <path d="M12 4v11m0-11 4 4m-4-4-4 4" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
+            <path d="M4 16v2.5A1.5 1.5 0 0 0 5.5 20h13a1.5 1.5 0 0 0 1.5-1.5V16" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
+          </svg>
+        </div>
+        <div className="dropzone-copy">
+          <div className="dropzone-primary">Drop project archives here</div>
+          <div className="dropzone-secondary">or click to browse — one .zip per project, several at once is fine. package.json required, no android/ios folders.</div>
+        </div>
         <input
           ref={inputRef}
           type="file"
           accept=".zip"
-          disabled={disabled}
+          multiple
           onChange={(e) => handleFiles(e.target.files)}
         />
       </div>
-      {selectedFile && (
-        <div className="file-name">
-          {selectedFile.name} ({(selectedFile.size / 1024 / 1024).toFixed(1)} MB)
-        </div>
-      )}
-    </>
+      {rejected && <div className="dropzone-reject">{rejected}</div>}
+    </div>
   );
 }

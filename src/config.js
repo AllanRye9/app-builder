@@ -38,7 +38,11 @@ const HOST_JOB_ROOT = process.env.HOST_JOB_ROOT || JOB_ROOT;
 module.exports = {
   PORT: parseInt(process.env.PORT || '3000', 10),
   DOCKER_IMAGE: process.env.DOCKER_IMAGE || 'apk-builder-android:latest',
-  MAX_CONCURRENT_BUILDS: parseInt(process.env.MAX_CONCURRENT_BUILDS || '1', 10),
+  // Multiple jobs now build side by side (see dockerRunner.js's bounded
+  // queue). 3 is a reasonable default for a single modest VPS/host given
+  // BUILD_MEMORY_LIMIT/BUILD_CPU_LIMIT below (3 x 2 CPU / 2g = worst case 6
+  // CPU / 6g under load) — raise it on bigger hardware, lower it on smaller.
+  MAX_CONCURRENT_BUILDS: parseInt(process.env.MAX_CONCURRENT_BUILDS || '3', 10),
   BUILD_MEMORY_LIMIT: process.env.BUILD_MEMORY_LIMIT || '2g',
   BUILD_CPU_LIMIT: process.env.BUILD_CPU_LIMIT || '2',
   BUILD_TIMEOUT_MS: parseInt(process.env.BUILD_TIMEOUT_MS || `${15 * 60 * 1000}`, 10),
@@ -52,4 +56,12 @@ module.exports = {
   // down once the frontend is deployed separately (see web/src/api.js and
   // the root README's frontend/worker split section).
   CORS_ORIGIN: process.env.CORS_ORIGIN || '*',
+  // Basic abuse guard for a public, high-volume upload endpoint: max
+  // uploads a single IP may start within RATE_LIMIT_WINDOW_MS. This is
+  // intentionally simple in-memory state (see routes.js) — fine for a
+  // single-instance worker; put a real rate limiter (e.g. at a reverse
+  // proxy) in front if this ever runs behind a load balancer with multiple
+  // instances.
+  RATE_LIMIT_MAX: parseInt(process.env.RATE_LIMIT_MAX || '10', 10),
+  RATE_LIMIT_WINDOW_MS: parseInt(process.env.RATE_LIMIT_WINDOW_MS || `${10 * 60 * 1000}`, 10),
 };

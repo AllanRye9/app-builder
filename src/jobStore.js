@@ -12,12 +12,14 @@ const jobs = new Map(); // jobId -> job record
 const bus = new EventEmitter();
 bus.setMaxListeners(0);
 
-function createJob() {
+function createJob(filename) {
   const id = uuidv4();
   const dir = path.join(JOB_ROOT, id);
   const record = {
     id,
+    filename: filename || 'project.zip',
     status: 'queued', // queued -> validating -> building -> success | failed
+    queuePosition: null,
     logs: [],
     notices: [],
     error: null,
@@ -52,6 +54,16 @@ function notice(job, payload) {
   bus.emit(`notice:${job.id}`, entry);
 }
 
+// How many builds are ahead of this one. Recomputed for every waiting job
+// each time the queue changes (see dockerRunner.js's pump()), so a job
+// that's been waiting sees its position count down in real time instead of
+// a single static "queued" label — meaningful once several builds can be
+// in flight and several more waiting behind them.
+function setQueuePosition(job, position) {
+  job.queuePosition = position;
+  bus.emit(`queue:${job.id}`, { position });
+}
+
 function setStatus(job, status, error) {
   job.status = status;
   if (error) job.error = error;
@@ -69,6 +81,7 @@ function purgeJob(job) {
   bus.removeAllListeners(`log:${job.id}`);
   bus.removeAllListeners(`notice:${job.id}`);
   bus.removeAllListeners(`status:${job.id}`);
+  bus.removeAllListeners(`queue:${job.id}`);
   bus.removeAllListeners(`done:${job.id}`);
   jobs.delete(job.id);
 }
@@ -81,4 +94,4 @@ setInterval(() => {
   }
 }, 5 * 60 * 1000).unref();
 
-module.exports = { jobs, bus, createJob, log, notice, setStatus, purgeJob };
+module.exports = { jobs, bus, createJob, log, notice, setStatus, setQueuePosition, purgeJob };
