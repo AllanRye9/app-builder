@@ -11,7 +11,8 @@ export async function uploadAndStartBuild(file) {
       handleUploadUrl: '/api/blob-upload',
     });
   } catch (err) {
-    throw new Error(`Upload failed: ${err.message}`);
+    const hint = await diagnoseBlobUploadFailure();
+    throw new Error(`Upload failed: ${err.message}${hint ? ` — ${hint}` : ''}`);
   }
 
   const res = await fetch('/api/start-build', {
@@ -32,6 +33,28 @@ export async function uploadAndStartBuild(file) {
     throw new Error(data.error || `Couldn't start the build (HTTP ${res.status}).`);
   }
   return data.jobId;
+}
+
+// The Blob client SDK's own error ("Failed to retrieve the client token")
+// doesn't say *why* — it fires the same way whether the route doesn't exist
+// at all, or exists but couldn't generate a token. A GET to the same route
+// (which our handler always rejects with 405, since it only accepts POST)
+// tells these two apart without needing to replicate the SDK's internal
+// token-request protocol.
+async function diagnoseBlobUploadFailure() {
+  try {
+    const res = await fetch('/api/blob-upload', { method: 'GET' });
+    const text = await res.text();
+    if (res.status === 404 || /<!doctype html/i.test(text)) {
+      return "the /api/blob-upload function doesn't seem to be deployed here — check the Vercel project's Root Directory setting.";
+    }
+    if (res.status === 405) {
+      return 'the route exists and responded, so this is most likely a missing or unattached Blob store — check the Storage tab, confirm BLOB_READ_WRITE_TOKEN is set in Environment Variables, and redeploy after adding it (env vars only apply to deployments made after they were set).';
+    }
+    return `diagnostic check got HTTP ${res.status}.`;
+  } catch {
+    return null;
+  }
 }
 
 // No long-lived connection to hold open here — GitHub Actions runs happen
