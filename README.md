@@ -1,256 +1,116 @@
-# apk-builder
+# apk-builder (Vercel + GitHub Actions edition)
 
-Drop in `.zip` files of a React (or Capacitor-ready) project → get back a downloadable debug APK
-for each one. The dashboard tracks as many builds as you start at once — each is its own
-independent job, queued and built without waiting on any other. Every build runs inside a
-disposable, resource-capped Docker container with a pre-configured Android SDK, so licenses,
-`ANDROID_SDK_ROOT`, and Gradle are already sorted — nothing to configure per build.
+Turns a React project zip into a downloadable debug APK. This version runs on **two managed
+platforms and nothing else** — no VPS, no Docker daemon to keep running, no image to rebuild:
+
+- **Vercel** hosts the dashboard (static React app) and a handful of tiny serverless functions.
+- **GitHub Actions** does the actual build, on a brand-new Ubuntu runner every single time.
+
+That second point is the whole reason this version exists: every previous failure in getting this
+working traced back to a persistent server running stale code after a fix was made but never
+redeployed. A GitHub Actions runner can't go stale — it's provisioned fresh from
+`.github/workflows/build-apk.yml` on every run, so whatever is committed to that file *is* what
+runs, always.
 
 ```
-Browser (React dashboard, web/)
-   │  drop N .zips → each becomes its own tracked job/ticket
-   │  live per-job logs + queue position over SSE, toast on completion/error
+Browser (this app, on Vercel)
+   │  1. upload .zip directly to Vercel Blob storage (bypasses the 4.5MB
+   │     function body limit — see api/blob-upload.js)
+   │  2. POST /api/start-build → creates a job id, dispatches GitHub Actions
    ▼
-Express backend (src/)
-   │  validate zip → extract → bounded queue (MAX_CONCURRENT_BUILDS) → spawn `docker run`
+api/*.js (Vercel Serverless Functions)
+   │  status persisted as a small JSON blob per job (Functions have no
+   │  memory between invocations — see api/_lib/statusStore.js)
    ▼
-Ephemeral Docker container (docker/android-build/)
-   │  npm install → npm run build → cap add android → gradlew assembleDebug
+.github/workflows/build-apk.yml (fresh GitHub-hosted Ubuntu runner)
+   │  JDK 21, Node 22, Android SDK → npm install → npm run build →
+   │  cap add android → gradlew assembleDebug
+   │  reports progress back via curl to /api/build-progress and
+   │  /api/build-complete, uploads the finished APK to Blob storage
    ▼
-app.apk copied to a mounted output volume → served for download
+Browser polls /api/status?jobId=... every 3s, shows a download link
+   once apkUrl is set
 ```
 
-## Project layout
+## One-time setup
 
-```
-apk-builder/
-├── docker-compose.yml        # single-command startup
-├── Dockerfile                 # app image: builds web/, runs the Express server
-├── src/                        # Express backend
-│   ├── index.js                #   entry point
-│   ├── config.js               #   env-driven settings (incl. HOST_JOB_ROOT, see below)
-│   ├── jobStore.js             #   in-memory job records + log/event bus + queue position
-│   ├── validate.js             #   zip validation & safe extraction
-│   ├── dockerRunner.js         #   bounded-concurrency queue, spawns the sibling build container
-│   └── routes.js               #   /api/upload, /api/status, /api/logs, /api/download, rate limiting
-├── web/                         # React frontend (Vite) — multi-job dashboard
-│   └── src/
-│       ├── App.jsx             #   job list, stats bar, notification permission
-│       ├── api.js
-│       └── components/         #   Dropzone, JobTicket, Pipeline, LogPanel, DownloadCard, ErrorBanner, ToastStack
-└── docker/android-build/       # the Android/Capacitor build image
-    ├── Dockerfile
-    └── build.sh
-```
+### 1. Push this to a GitHub repo
 
-## Run it — one command
+Public or private both work. Public repos get **unlimited** free GitHub Actions minutes; private
+repos get 2,000 free minutes/month (a typical build takes 3–6 minutes).
+
+### 2. Create a GitHub token
+
+Fine-grained personal access token ([github.com/settings/tokens?type=beta](https://github.com/settings/tokens?type=beta)),
+scoped to just this repo, with:
+- **Contents**: Read and write
+- **Actions**: Read and write
+
+(Needed for the `POST /repos/{owner}/{repo}/dispatches` call in `api/start-build.js`.)
+
+### 3. Deploy to Vercel
+
+Import the repo in Vercel. Root directory is the repo root (not a subfolder).
+
+### 4. Add a Blob store
+
+Vercel project → **Storage** tab → **Create Database** → **Blob**. This automatically sets the
+`BLOB_READ_WRITE_TOKEN` environment variable in your Vercel project — you don't set it by hand.
+
+### 5. Set the remaining Vercel environment variables
+
+Project → **Settings** → **Environment Variables**:
+
+| Variable | Value |
+|---|---|
+| `GITHUB_TOKEN` | the token from step 2 |
+| `GITHUB_OWNER` | your GitHub username or org |
+| `GITHUB_REPO` | this repo's name |
+| `CALLBACK_SECRET` | any random string, e.g. `openssl rand -hex 32` |
+
+### 6. Add one secret on the GitHub side
+
+Repo → **Settings** → **Secrets and variables** → **Actions** → **New repository secret**:
+
+| Secret | Value |
+|---|---|
+| `BLOB_READ_WRITE_TOKEN` | the **same value** as the Vercel one from step 4 — so the workflow can upload the finished APK to the same Blob store the frontend downloads it from |
+
+(`CALLBACK_SECRET` does *not* need to be a GitHub secret — `api/start-build.js` sends it as part
+of the dispatch payload each time, so it only has to exist on the Vercel side.)
+
+### 7. Redeploy
+
+Trigger one more Vercel deployment after adding the env vars (Vercel doesn't retroactively inject
+new env vars into an already-built deployment).
+
+That's it — no server to SSH into, ever.
+
+## The one thing that still needs "redeploying"
+
+If you edit `.github/workflows/build-apk.yml` itself, that change only takes effect once it's on
+the repo's **default branch** (GitHub only runs the workflow file version that's on default branch
+for `repository_dispatch` events, not whatever's on a feature branch). Push/merge to `main` and
+you're done — there's no image to rebuild, no container to restart.
+
+## Local development
 
 ```bash
-docker compose up --build
-```
-
-That's it. This single command:
-
-1. Builds `apk-builder-android` — the Android/Capacitor build environment (JDK 21, Android SDK,
-   Gradle wrapper, Node 22, Capacitor CLI). It's only ever *built*, never run as a long-lived
-   container — `docker compose` builds the image and exits immediately, satisfying it as a
-   dependency.
-2. Builds `apk-builder-app` — the React frontend plus the Express server — and starts it.
-3. Serves the UI at **http://localhost:3000**.
-
-Each APK build after that spins up a fresh `apk-builder-android` container on demand, capped on
-CPU/memory, and destroyed when it finishes.
-
-## Version pinning (deliberate, not dynamic)
-
-This used to chase `@latest` for Capacitor and auto-detect/switch JDKs at runtime. Both were
-removed after repeated, confusing build failures traced back to exactly that kind of implicit
-drift — an unannounced Capacitor release, or a stale image after an edit, silently changing what
-the build required. Everything relevant is now pinned explicitly, in one place each:
-
-- **JDK**: 21 only (`docker/android-build/Dockerfile`). `capacitor-android`'s own `build.gradle`
-  has required JDK 21 since Capacitor 7.0.1 (see [ionic-team/capacitor#7879](https://github.com/ionic-team/capacitor/issues/7879))
-  and still does on the 8.x line, so this isn't a moving target. `build.sh` checks its own Java
-  version in the first second of every build and fails immediately, with the exact fix command, if
-  it's ever wrong — almost always meaning the image is stale and needs `docker compose build
-  --no-cache android-build-image`.
-- **Capacitor**: CLI pinned to major version 7 in the Dockerfile (`npm install -g
-  @capacitor/cli@7`); `build.sh` installs `@capacitor/core`/`@capacitor/android` at the same
-  major (`CAPACITOR_MAJOR`, default `7`) so the three packages can't drift apart from each other.
-  Bump `CAPACITOR_MAJOR` (and re-verify the JDK requirement above) deliberately when you want to
-  move to Capacitor 8.
-- **Node**: fixed at 22 in the Dockerfile — Capacitor's CLI requires it.
-
-## Build notifications (pop-ups)
-
-Anything the build decides or fixes dynamically — a version it matched, a package it installed
-on the fly, a permission it patched in, a validation rejection — is emitted as a structured
-**notice**, separate from the scrolling log text:
-
-```
-build.sh  →  "##NOTICE## {\"level\":\"info\",\"title\":\"...\",\"message\":\"...\"}" on stdout
-         →  src/dockerRunner.js parses the marker, calls jobStore.notice()
-         →  src/routes.js forwards it as an SSE "notice" event
-         →  web/src/components/ToastStack.jsx renders it as a dismissible pop-up
-```
-
-Levels are `info`, `warning`, `success`, and `error` (errors don't auto-dismiss). To add a new
-notice from `build.sh`, just call the existing `notice()` shell function:
-
-```bash
-notice "info" "Short title" "Longer explanation of what happened and why."
-```
-
-## About the `cd: /project: No such file or directory` error
-
-That error means `build.sh` was asked to `cd` into `/project`, but nothing was bind-mounted
-there. Two different situations cause it, and both are fixed here:
-
-**1. Running the build image directly without volumes.** If you run:
-
-```bash
-docker run --rm apk-builder-android          # missing -v flags
-```
-
-there's nothing at `/project` at all. `build.sh` now checks for this and fails with an explicit
-message and the correct command, instead of a bare shell error:
-
-```bash
-docker run --rm \
-  -v "$(pwd)/my-react-app:/project" \
-  -v "$(pwd)/output:/output" \
-  apk-builder-android
-```
-
-**2. The path-translation trap when the server itself runs in a container.** The Express server
-builds APKs by shelling out to `docker run`. When the server is containerized (as it now is, via
-the root `Dockerfile`) and talks to the **host's** Docker daemon over a mounted
-`/var/run/docker.sock`, that daemon always resolves `-v` bind mounts against the **host**
-filesystem — never against the calling container's filesystem. If the server passed its own
-in-container job path (e.g. `/workspace/jobs/<id>/project`), the host daemon would look for that
-exact path *on the host*, not find it, and either error out or mount an empty directory — which
-is exactly what produces this failure.
-
-The fix is `HOST_JOB_ROOT` in `src/config.js` / `src/dockerRunner.js`: the server keeps using its
-own in-container path (`JOB_ROOT`) for reading and writing files, but translates that path to the
-real host path (`HOST_JOB_ROOT`) whenever it constructs a `-v` flag for a sibling build container.
-`docker-compose.yml` wires this up by bind-mounting `./.jobs` (a real host directory) into the app
-container at `/workspace/jobs`, and passing the host-side path in as `HOST_JOB_ROOT`.
-
-If you run the server directly on the host (no container, see below), there's no path
-translation to do — `HOST_JOB_ROOT` simply isn't set and defaults to `JOB_ROOT`.
-
-## Running without Docker Compose
-
-You can still run the pieces by hand if you prefer:
-
-```bash
-# 1. Build the build image (once; rebuild to bump SDK/Gradle/Node versions)
-docker build -t apk-builder-android:latest docker/android-build
-
-# 2. Build the frontend
-npm run build:web
-
-# 3. Install and run the backend directly on the host
 npm install
-npm start
+npx vercel dev     # serves both the API functions and the Vite app on :3000
 ```
 
-The server listens on `http://localhost:3000` and serves the built React app at `/`.
+(`npm run dev` alone only runs the Vite dev server — the `/api/*` functions need `vercel dev` or a
+real Vercel deployment to run at all, since they're not an Express app.)
 
-## Frontend development
+## Known trade-offs versus a self-hosted worker
 
-For hot-reloading UI work without rebuilding Docker images each time:
-
-```bash
-npm start          # terminal 1 — Express API on :3000
-npm run dev:web     # terminal 2 — Vite dev server on :5173, proxies /api to :3000
-```
-
-## Deploying the frontend on Vercel, Netlify, or any static host
-
-**Only the React app (`web/`) can run on Vercel or a similar serverless/static platform.** The
-build worker cannot, and this isn't a configuration gap — it's a hard platform wall:
-
-- Vercel Serverless Functions cap request/response bodies at **4.5 MB**. This app accepts project
-  archives up to 150 MB by default.
-- Execution time is capped too — 10s on Hobby, up to 800s on Pro/Enterprise with Fluid Compute,
-  never unlimited. A real Android build (`npm install` + Vite build + Gradle `assembleDebug`)
-  routinely takes minutes.
-- There's no Docker daemon available inside a Vercel Function, and nothing to mount a socket into
-  — this app's entire build mechanism is spawning sibling Docker containers.
-
-So the split is: **frontend on Vercel (or Netlify, Cloudflare Pages, GitHub Pages, S3+CloudFront,
-nginx — anything that serves static files)**, **worker on anything with a real, persistent Docker
-daemon** — a VPS, Fly.io, Railway, Render, EC2, or your own machine, using the existing
-`docker-compose.yml` unchanged.
-
-Steps:
-
-1. **Deploy the worker** somewhere with Docker, exactly as described above (`docker compose up
-   --build`). Note its public HTTPS URL, e.g. `https://build.example.com`. Set `CORS_ORIGIN` on
-   the worker (via `.env` or your host's env var settings) to the frontend's eventual origin,
-   e.g. `CORS_ORIGIN=https://your-app.vercel.app`.
-2. **Deploy `web/` to Vercel** (or another static host): in Vercel's project settings, set **Root
-   Directory** to `web`. It auto-detects Vite (a `web/vercel.json` is included for clarity/
-   explicit config). Set the environment variable `VITE_API_BASE_URL` to the worker's URL from
-   step 1 — see `web/.env.example`.
-3. That's it — the deployed frontend talks directly to the worker over CORS for upload, the SSE
-   log stream, and download. Vercel never sees the large upload or the long-running build; it's
-   purely serving static files.
-
-The same two-part split applies to any other host that only offers static file serving (or a
-serverless-functions model) rather than a persistent Docker daemon.
-
-## Configuration
-
-All optional, set as environment variables (or in a `.env` file — see `.env.example`):
-
-| Variable | Default | Purpose |
-|---|---|---|
-| `PORT` | `3000` | HTTP port |
-| `DOCKER_IMAGE` | `apk-builder-android:latest` | Image tag to run per build |
-| `MAX_CONCURRENT_BUILDS` | `3` | How many Docker builds run in parallel |
-| `BUILD_MEMORY_LIMIT` | `2g` | `--memory` cap passed to `docker run` |
-| `BUILD_CPU_LIMIT` | `2` | `--cpus` cap passed to `docker run` |
-| `BUILD_TIMEOUT_MS` | `900000` (15 min) | Kill the container if a build hangs |
-| `MAX_UPLOAD_BYTES` | `314572800` (300 MB) | Max accepted zip size |
-| `JOB_ROOT` | OS temp dir | Where per-job workspaces are extracted (in-container path) |
-| `HOST_JOB_ROOT` | same as `JOB_ROOT` | Real host-side path of `JOB_ROOT`, for DooD bind mounts |
-| `JOB_TTL_MS` | `3600000` (1 hr) | How long a finished job's files stick around before cleanup |
-| `CORS_ORIGIN` | `*` | Origin(s) allowed to call this worker's API cross-origin (comma-separated); set when the frontend is hosted separately |
-| `RATE_LIMIT_MAX` | `10` | Max uploads a single IP may start within `RATE_LIMIT_WINDOW_MS` |
-| `RATE_LIMIT_WINDOW_MS` | `600000` (10 min) | Sliding window for the rate limit above |
-
-Frontend-side (set in `web/.env` / `web/.env.production`, or your static host's env var settings):
-
-| Variable | Default | Purpose |
-|---|---|---|
-| `VITE_API_BASE_URL` | unset (same-origin) | Worker's full URL, when the frontend is deployed separately (Vercel, etc.) |
-
-## What gets validated before a build ever starts
-
-- Archive must contain a root-level `package.json`.
-- Archive is rejected outright if it already contains `android/`, `ios/`, `platforms/`, `capacitor.config.json`, or `capacitor.config.ts` — the build generates the native project itself, so a pre-existing one is a conflict, not just noise.
-- Every other file is checked against an allowlist of source-file extensions (`.js`, `.ts`, `.tsx`, `.css`, `.json`, images, fonts, etc.). Anything **not** on that list — `proguard-rules.pro`, editor/OS cruft, license files, whatever — is simply **left out of the extracted project** rather than failing the whole upload; none of it is needed to build the APK, since the native `android/` project is regenerated fresh every build regardless of what was in the zip. Skipped files are listed in the build log and summarized as an info toast.
-- Zip-slip protection: any entry path that resolves outside the extraction directory is rejected (this one still fails the whole upload — it's a safety check, not a convenience filter).
-
-## API
-
-- `POST /api/upload` — multipart form, field name `zip`. Returns `{ jobId }`.
-- `GET /api/status/:jobId` — current status, error (if any), and full log history.
-- `GET /api/logs/:jobId/stream` — Server-Sent Events stream of log lines plus `status`/`done` events.
-- `GET /api/download/:jobId` — streams `app.apk` once the job succeeds.
-
-## Notes on isolation
-
-- Each build runs in its own container, started with `--rm` (destroyed on exit) and capped `--memory`/`--cpus`.
-- The container **does** need outbound network access — `npm install` and the first `cap add android` pull from the npm registry and Google's Maven/Gradle distribution — so it isn't network-isolated. Isolation comes from the container being ephemeral and resource-limited, not network-air-gapped.
-- Per-job workspaces live under `JOB_ROOT` and are deleted automatically after `JOB_TTL_MS`.
-- Mounting `/var/run/docker.sock` gives the app container the ability to control the host's Docker daemon (start/stop any container, not just build containers). That's an inherent tradeoff of the Docker-outside-of-Docker pattern used here to keep the whole stack to one `docker compose up`; if you need stronger isolation, run the backend directly on the host instead (see above) so it talks to the host daemon without a shared socket mount.
-
-## Production deployment notes
-
-- Put this behind a reverse proxy (e.g. Nginx) that allows large request bodies (`client_max_body_size` ≥ your `MAX_UPLOAD_BYTES`) and doesn't buffer the SSE log stream (`proxy_buffering off` on the `/api/logs/*` location).
-- The in-memory job store (`jobs` Map in `src/jobStore.js`) is single-instance only. If you need to run more than one backend replica, move job state to Redis/Postgres and keep only one instance polling/spawning Docker builds, or use a real job queue (BullMQ, etc.).
-- Consider building release (signed) APKs instead of `assembleDebug` for anything beyond internal testing — that requires mounting a keystore into the container and switching `build.sh` to `assembleRelease`, which is intentionally left out here since it involves secret handling.
+- **No live raw log streaming.** Instead of tailing build output line-by-line, the dashboard shows
+  coarse phase progress (validating/building/done) and a link straight to the GitHub Actions run
+  for the full log — GitHub's own log viewer is genuinely better for this than reinventing it.
+- **20-minute build timeout**, set in the workflow file. Raise `timeout-minutes` if a project
+  legitimately needs longer (GitHub's own hard ceiling is 6 hours).
+- **Default app id/name** (`com.builder.app` / `MyApp`) are hardcoded in the workflow's `env:`
+  block — edit those two lines if you want them configurable per upload instead.
+- **Web build output directory** is auto-detected (`dist`, `build`, `www`, or `out`) — if your
+  project uses something else, add it to the list in the "Detect web build output directory" step.
