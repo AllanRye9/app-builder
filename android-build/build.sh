@@ -1,6 +1,7 @@
 #!/bin/bash
 set -euo pipefail
 
+
 echo "=== apk-builder: starting build ==="
 echo "Node: $(node -v) | npm: $(npm -v)"
 echo "Java: $(java -version 2>&1 | head -n1) | image: ${APK_BUILDER_IMAGE_VERSION:-unknown}"
