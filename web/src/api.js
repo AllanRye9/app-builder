@@ -1,8 +1,12 @@
-// By default this dashboard and the API are served from the same service
-// service, so this stays same-origin (VITE_API_BASE_URL unset). If you ever
-// split the frontend out to a separate static host, set VITE_API_BASE_URL to
-// this service's full URL and set CORS_ORIGIN on the server (src/config.js)
-// to the frontend's origin.
+// API_BASE lets the frontend be hosted separately from the build worker —
+// e.g. this React app on Vercel/Netlify/any static host, while the actual
+// Docker build worker runs on a VPS/Fly.io/Railway/Render (anywhere with a
+// real Docker daemon — see the root README for why Vercel itself can't run
+// the worker). Leave VITE_API_BASE_URL unset for the default single-origin
+// deployment (docker-compose serves both from the same host); set it to the
+// worker's full origin (e.g. https://build.example.com) when split across
+// two hosts. The worker must have CORS_ORIGIN set to this frontend's origin
+// in that case — see src/index.js.
 const API_BASE = (import.meta.env.VITE_API_BASE_URL || '').replace(/\/$/, '');
 
 export async function uploadZip(file) {
@@ -19,7 +23,7 @@ export async function uploadZip(file) {
     throw new Error(
       API_BASE
         ? `Can't reach the build worker at ${API_BASE}. Check VITE_API_BASE_URL and that the worker is running.`
-        : "Can't reach the API. If the frontend is deployed separately from the backend, set VITE_API_BASE_URL to the backend's URL."
+        : "Can't reach the API. If the frontend is deployed separately (e.g. on Vercel), set VITE_API_BASE_URL to the worker's URL."
     );
   }
 
@@ -32,7 +36,7 @@ export async function uploadZip(file) {
     // of the Express app answered instead of it: a reverse proxy's own 413
     // error page (body too large — see README's client_max_body_size note),
     // or, if API_BASE is unset/wrong on a split deployment, this request
-    // landing on a host with no backend at all (e.g. a static-only host's own 404 page).
+    // landing on a host with no backend at all (e.g. Vercel's own 404 page).
     throw new Error(
       `Upload failed: server returned HTTP ${res.status} ${res.statusText} (not JSON) — ` +
       (res.status === 413

@@ -1,16 +1,51 @@
+# One-line startup:
+#
+#   docker compose up --build
+#
+# This builds two images and starts one service:
+#
+#   1. android-build-image — the disposable Android/Capacitor build
+#      environment (docker/android-build/). It is only ever built, never
+#      started as a long-running container: its entrypoint is overridden to
+#      `true` so `docker compose up` can bring it "up" (build + exit 0)
+#      as a dependency without actually running build.sh.
+#
+#   2. app — the Express + React web server. It mounts the host's Docker
+#      socket so it can spawn `android-build-image` containers on demand
+#      per upload (Docker-outside-of-Docker).
+#
+# HOST_JOB_ROOT is the fix for the classic
+# "cd: /project: No such file or directory" failure: since `app` talks to
+# the *host* Docker daemon, any bind mount it requests must use a path that
+# exists on the host, not a path inside its own container. ./.jobs on the
+# host is bind-mounted into the app container at /workspace/jobs, and
+# HOST_JOB_ROOT tells the app the real host-side path of that same
+# directory so it can translate correctly. See src/config.js for details.
+
 services:
-  apk-builder:
-    build: .
+  android-build-image:
+    build:
+      context: ./docker/android-build
+    image: apk-builder-android:latest
+    entrypoint: ["true"]
+
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: apk-builder-app:latest
     ports:
-      - "3000:3000"
+      - "${PORT:-3000}:3000"
     environment:
-      - PORT=3000
-      - MAX_CONCURRENT_BUILDS=2
-      - BUILD_TIMEOUT_MS=900000
-      - MAX_UPLOAD_BYTES=314572800
-      - JOB_TTL_MS=3600000
-      - RATE_LIMIT_MAX=10
-      - RATE_LIMIT_WINDOW_MS=600000
-      - APP_ID=com.builder.app
-      - APP_NAME=MyApp
+      PORT: 3000
+      DOCKER_IMAGE: apk-builder-android:latest
+      JOB_ROOT: /workspace/jobs
+      HOST_JOB_ROOT: ${PWD}/.jobs
+      CORS_ORIGIN: ${CORS_ORIGIN:-*}
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ./.jobs:/workspace/jobs
+    depends_on:
+      android-build-image:
+        condition: service_completed_successfully
     restart: unless-stopped
