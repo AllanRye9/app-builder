@@ -1,7 +1,9 @@
-node_modules/
-dist/
-.vercel/
+node_modules
+npm-debug.log
+.jobs
+web/node_modules
+web/dist
 .env
-.env.local
-*.log
-.DS_Store
+web/.env
+web/.env.local
+web/.env.production

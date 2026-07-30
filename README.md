@@ -1,116 +1,104 @@
-# apk-builder (Vercel + GitHub Actions edition)
+# apk-builder (Render edition)
 
-Turns a React project zip into a downloadable debug APK. This version runs on **two managed
-platforms and nothing else** — no VPS, no Docker daemon to keep running, no image to rebuild:
+Turns a React project zip into a downloadable debug APK. This version runs as a **single Docker
+service on Render** — one container has the Express server, the React dashboard, and the full
+Android build toolchain (JDK 21, Android SDK, Gradle) all in one image.
 
-- **Vercel** hosts the dashboard (static React app) and a handful of tiny serverless functions.
-- **GitHub Actions** does the actual build, on a brand-new Ubuntu runner every single time.
+## Why this is a different architecture from the VPS/docker-compose version
 
-That second point is the whole reason this version exists: every previous failure in getting this
-working traced back to a persistent server running stale code after a fix was made but never
-redeployed. A GitHub Actions runner can't go stale — it's provisioned fresh from
-`.github/workflows/build-apk.yml` on every run, so whatever is committed to that file *is* what
-runs, always.
+The original version span up a **sibling** Docker container per build (`docker run ...`) by
+talking to the host's Docker daemon. That requires either a real VPS with Docker installed, or a
+mounted `/var/run/docker.sock` — neither of which Render (or Vercel, or most PaaS platforms)
+exposes to a service. Trying to deploy that version here produces exactly the kind of failure you
+just hit: the image either can't find the Docker socket at all, or (as happened) the Dockerfile
+built for that architecture doesn't even match this project's layout.
+
+The fix isn't a workaround for that constraint — it's a different, equally valid architecture:
+**the build toolchain lives in the same container as the app**, and `src/buildRunner.js` runs each
+build as a direct subprocess (`npm install`, `npm run build`, `npx cap add android`,
+`./gradlew assembleDebug`) instead of spawning a sibling container. Same build steps, same
+dashboard, no socket required.
 
 ```
-Browser (this app, on Vercel)
-   │  1. upload .zip directly to Vercel Blob storage (bypasses the 4.5MB
-   │     function body limit — see api/blob-upload.js)
-   │  2. POST /api/start-build → creates a job id, dispatches GitHub Actions
-   ▼
-api/*.js (Vercel Serverless Functions)
-   │  status persisted as a small JSON blob per job (Functions have no
-   │  memory between invocations — see api/_lib/statusStore.js)
-   ▼
-.github/workflows/build-apk.yml (fresh GitHub-hosted Ubuntu runner)
-   │  JDK 21, Node 22, Android SDK → npm install → npm run build →
-   │  cap add android → gradlew assembleDebug
-   │  reports progress back via curl to /api/build-progress and
-   │  /api/build-complete, uploads the finished APK to Blob storage
-   ▼
-Browser polls /api/status?jobId=... every 3s, shows a download link
-   once apkUrl is set
+Render Web Service (one Docker container)
+├── Express server (src/) — serves the React dashboard as static files + the API
+├── React dashboard (web/) — same multi-job ticket UI as before
+└── Build toolchain (JDK 21, Android SDK, Node 22, Gradle) — baked into the same image
+        │
+        ▼
+   src/buildRunner.js spawns build steps as direct subprocesses per job,
+   bounded by MAX_CONCURRENT_BUILDS, all sharing this one container's CPU/RAM
 ```
 
-## One-time setup
+## Deploying
 
-### 1. Push this to a GitHub repo
+### Option A: Blueprint (one click)
 
-Public or private both work. Public repos get **unlimited** free GitHub Actions minutes; private
-repos get 2,000 free minutes/month (a typical build takes 3–6 minutes).
+This repo includes `render.yaml`. In Render: **New → Blueprint**, point it at this repo, and it
+reads the service definition automatically — plan, health check, env vars are all pre-filled.
 
-### 2. Create a GitHub token
+### Option B: Manual
 
-Fine-grained personal access token ([github.com/settings/tokens?type=beta](https://github.com/settings/tokens?type=beta)),
-scoped to just this repo, with:
-- **Contents**: Read and write
-- **Actions**: Read and write
+**New → Web Service** → connect this repo → set:
+- **Runtime**: Docker
+- **Dockerfile Path**: `./Dockerfile`
+- **Root Directory**: leave blank (repo root) — this is the most common cause of a "Cannot find
+  module" crash like the one that led here: if Root Directory points anywhere other than where
+  this `Dockerfile` and `src/` actually live in your repo, the build context won't include them.
 
-(Needed for the `POST /repos/{owner}/{repo}/dispatches` call in `api/start-build.js`.)
+## Sizing — this is the one thing that's genuinely different from before
 
-### 3. Deploy to Vercel
+Every build's CPU and memory now comes directly out of **this one container's** resources — there's
+no more per-job Docker `--memory`/`--cpus` cap, because there's no more sibling container to cap.
+Gradle + the Android Gradle Plugin alone routinely use 1.5–2.5GB per concurrent build.
 
-Import the repo in Vercel. Root directory is the repo root (not a subfolder).
+- `MAX_CONCURRENT_BUILDS` defaults to **2**. Don't raise it without also sizing up the Render plan
+  — this is a real ceiling, not a suggestion. Render's **Standard** plan (2GB RAM) comfortably
+  handles 1–2 concurrent builds; go **Pro** or higher before raising this further.
+- Job workspaces live in `/tmp` (ephemeral, cleared on every deploy/restart) — this is intentional,
+  not a gap. They're meant to be temporary; `jobStore.js`'s own TTL sweep and post-download cleanup
+  already handle removing them during normal operation.
 
-### 4. Add a Blob store
+## Environment variables
 
-Vercel project → **Storage** tab → **Create Database** → **Blob**. This automatically sets the
-`BLOB_READ_WRITE_TOKEN` environment variable in your Vercel project — you don't set it by hand.
+All optional, all have defaults in `render.yaml` / `src/config.js`:
 
-### 5. Set the remaining Vercel environment variables
+| Variable | Default | Notes |
+|---|---|---|
+| `MAX_CONCURRENT_BUILDS` | `2` | See sizing note above — this is a hard shared-resource ceiling now |
+| `BUILD_TIMEOUT_MS` | `900000` (15 min) | Kills the whole build if any single step hangs |
+| `MAX_UPLOAD_BYTES` | `314572800` (300MB) | Max accepted zip size |
+| `JOB_TTL_MS` | `3600000` (1 hr) | How long a finished job's files stick around |
+| `RATE_LIMIT_MAX` / `RATE_LIMIT_WINDOW_MS` | `10` / `600000` | Per-IP upload rate limit |
+| `APP_ID` / `APP_NAME` | `com.builder.app` / `MyApp` | Baked into every generated APK — same for all uploads by default |
+| `CORS_ORIGIN` | `*` | Only matters if you split the frontend out separately later |
 
-Project → **Settings** → **Environment Variables**:
+## The Android SDK download — the one external version dependency
 
-| Variable | Value |
-|---|---|
-| `GITHUB_TOKEN` | the token from step 2 |
-| `GITHUB_OWNER` | your GitHub username or org |
-| `GITHUB_REPO` | this repo's name |
-| `CALLBACK_SECRET` | any random string, e.g. `openssl rand -hex 32` |
+The Dockerfile downloads a specific, pinned build of Android's command-line tools from Google's
+CDN (`CMDLINE_TOOLS_VERSION` build arg, defaulting to `11076708`). Google does occasionally retire
+old build numbers. If the image build ever fails specifically at the
+`curl ... commandlinetools-linux-...` step:
 
-### 6. Add one secret on the GitHub side
+1. Check [developer.android.com/studio#command-line-tools-only](https://developer.android.com/studio#command-line-tools-only) for the current filename.
+2. In Render → your service → **Environment** → add a build arg, or edit the `ARG
+   CMDLINE_TOOLS_VERSION` line in the Dockerfile directly and redeploy.
 
-Repo → **Settings** → **Secrets and variables** → **Actions** → **New repository secret**:
+This is deliberately the *only* place in the whole setup with an external version pin like this —
+kept isolated here on purpose so it's a one-line fix if it ever goes stale, not a mystery buried in
+a build log.
 
-| Secret | Value |
-|---|---|
-| `BLOB_READ_WRITE_TOKEN` | the **same value** as the Vercel one from step 4 — so the workflow can upload the finished APK to the same Blob store the frontend downloads it from |
+## What's genuinely different from the previous versions
 
-(`CALLBACK_SECRET` does *not* need to be a GitHub secret — `api/start-build.js` sends it as part
-of the dispatch payload each time, so it only has to exist on the Vercel side.)
-
-### 7. Redeploy
-
-Trigger one more Vercel deployment after adding the env vars (Vercel doesn't retroactively inject
-new env vars into an already-built deployment).
-
-That's it — no server to SSH into, ever.
-
-## The one thing that still needs "redeploying"
-
-If you edit `.github/workflows/build-apk.yml` itself, that change only takes effect once it's on
-the repo's **default branch** (GitHub only runs the workflow file version that's on default branch
-for `repository_dispatch` events, not whatever's on a feature branch). Push/merge to `main` and
-you're done — there's no image to rebuild, no container to restart.
-
-## Local development
-
-```bash
-npm install
-npx vercel dev     # serves both the API functions and the Vite app on :3000
-```
-
-(`npm run dev` alone only runs the Vite dev server — the `/api/*` functions need `vercel dev` or a
-real Vercel deployment to run at all, since they're not an Express app.)
-
-## Known trade-offs versus a self-hosted worker
-
-- **No live raw log streaming.** Instead of tailing build output line-by-line, the dashboard shows
-  coarse phase progress (validating/building/done) and a link straight to the GitHub Actions run
-  for the full log — GitHub's own log viewer is genuinely better for this than reinventing it.
-- **20-minute build timeout**, set in the workflow file. Raise `timeout-minutes` if a project
-  legitimately needs longer (GitHub's own hard ceiling is 6 hours).
-- **Default app id/name** (`com.builder.app` / `MyApp`) are hardcoded in the workflow's `env:`
-  block — edit those two lines if you want them configurable per upload instead.
-- **Web build output directory** is auto-detected (`dist`, `build`, `www`, or `out`) — if your
-  project uses something else, add it to the list in the "Detect web build output directory" step.
+- **No live Docker log streaming quirks to fight** — since builds run as direct subprocesses in
+  this same process (not an external container we parse `##NOTICE##` markers out of),
+  `buildRunner.js` calls the job log/status functions directly at each step. Simpler and more
+  robust than the Docker version's approach, not just a substitute for it.
+- **Render auto-deploys on push** (if enabled, which it is by default for a connected repo) — so
+  the "fixed the code but never redeployed" failure mode that caused most of the pain in the
+  VPS/docker-compose version is structurally much less likely here, though not impossible (you can
+  still disable auto-deploy or push to the wrong branch).
+- **No per-job resource isolation** — the real trade-off versus the Docker-orchestrator version.
+  Mitigated by `MAX_CONCURRENT_BUILDS` and `BUILD_TIMEOUT_MS`, but a single runaway build can still
+  affect others sharing the container. Acceptable for moderate volume; genuinely worth reconsidering
+  a dedicated-VM-per-build architecture if this needs to scale to heavy concurrent load.

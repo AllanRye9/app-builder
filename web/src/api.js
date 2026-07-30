@@ -1,12 +1,8 @@
-// API_BASE lets the frontend be hosted separately from the build worker —
-// e.g. this React app on Vercel/Netlify/any static host, while the actual
-// Docker build worker runs on a VPS/Fly.io/Railway/Render (anywhere with a
-// real Docker daemon — see the root README for why Vercel itself can't run
-// the worker). Leave VITE_API_BASE_URL unset for the default single-origin
-// deployment (docker-compose serves both from the same host); set it to the
-// worker's full origin (e.g. https://build.example.com) when split across
-// two hosts. The worker must have CORS_ORIGIN set to this frontend's origin
-// in that case — see src/index.js.
+// By default this dashboard and the API are served from the same Render
+// service, so this stays same-origin (VITE_API_BASE_URL unset). If you ever
+// split the frontend out to a separate static host, set VITE_API_BASE_URL to
+// this service's full URL and set CORS_ORIGIN on the server (src/config.js)
+// to the frontend's origin.
 const API_BASE = (import.meta.env.VITE_API_BASE_URL || '').replace(/\/$/, '');
 
 export async function uploadZip(file) {
