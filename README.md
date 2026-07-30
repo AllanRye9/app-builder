@@ -109,8 +109,15 @@ ignore the rest. None of them are required for the app to work.
 <details>
 <summary><strong>Render</strong></summary>
 
-`render.yaml` is included — **New -> Blueprint**, point it at this repo. Or manually: **New -> Web
-Service** -> Docker runtime -> Dockerfile Path `./Dockerfile` -> Root Directory blank (repo root).
+**Use Blueprint, not manual service creation.** `render.yaml` declares `runtime: docker` in code
+— **New → Blueprint**, point it at this repo, and Render reads the runtime from that file
+directly. Manual **New → Web Service** creation makes you pick the runtime from a dropdown
+yourself, and Render's auto-detect defaults to treating a repo with a `package.json` as a plain
+Node app if you don't catch that — which silently ignores the Dockerfile entirely and tries to run
+`src/index.js` with none of the build steps ever having happened. If you ever see `Cannot find
+module '/app/src/index.js'` on Render specifically, check **Settings → Runtime** first — if it says
+"Node" instead of "Docker", that's the whole bug, and the fix is deleting and recreating the
+service with Docker explicitly selected (Render doesn't allow changing Runtime after creation).
 </details>
 
 <details>
