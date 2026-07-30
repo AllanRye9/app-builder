@@ -11,7 +11,7 @@ const { enqueue } = require('./buildRunner');
 
 const router = express.Router();
 
-// Render (and most PaaS platforms) poll this to decide if the instance is
+// Most hosting platforms poll a path like this to decide if the instance is
 // healthy enough to receive traffic — deliberately cheap, no disk/job-store
 // access, so it stays fast even while builds are running.
 router.get('/health', (req, res) => {

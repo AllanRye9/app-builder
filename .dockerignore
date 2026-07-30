@@ -1,0 +1,10 @@
+node_modules
+web/node_modules
+web/dist
+.git
+.gitignore
+*.md
+.env
+.env.local
+.jobs
+npm-debug.log

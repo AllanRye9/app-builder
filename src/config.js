@@ -10,7 +10,8 @@ const os = require('os');
 const JOB_ROOT = process.env.JOB_ROOT || path.join(os.tmpdir(), 'apk-builder-jobs');
 
 module.exports = {
-  // Render injects PORT itself — the app must listen on whatever it sets.
+  // Most platforms inject PORT themselves — the app must listen on
+  // whatever it sets. Falls back to 3000 for local/bare `docker run` use.
   PORT: parseInt(process.env.PORT || '3000', 10),
 
   // Builds now share this one container's CPU/RAM directly (no per-job
@@ -18,7 +19,7 @@ module.exports = {
   // container to cap). Default is deliberately conservative — Gradle + the
   // Android Gradle Plugin alone can use 1.5-2.5GB per concurrent build, on
   // top of whatever the Express server itself needs. Size this against your
-  // Render plan's actual RAM, not against how many CPU cores it has.
+  // host/plan's actual RAM, not against how many CPU cores it has.
   MAX_CONCURRENT_BUILDS: parseInt(process.env.MAX_CONCURRENT_BUILDS || '2', 10),
 
   BUILD_TIMEOUT_MS: parseInt(process.env.BUILD_TIMEOUT_MS || `${15 * 60 * 1000}`, 10),
@@ -26,7 +27,7 @@ module.exports = {
   JOB_ROOT,
   JOB_TTL_MS: parseInt(process.env.JOB_TTL_MS || `${60 * 60 * 1000}`, 10),
 
-  // Frontend and API are served from this same Render service by default,
+  // Frontend and API are served from this same service by default,
   // so cross-origin requests aren't the normal case here — but kept
   // available in case you ever split the frontend out separately.
   CORS_ORIGIN: process.env.CORS_ORIGIN || '*',

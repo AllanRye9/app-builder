@@ -1,3 +1,6 @@
+# Optional. Only used if you deploy via Render's "New -> Blueprint" flow.
+# Every other platform in the README ignores this file — this app has no
+# dependency on it beyond convenience.
 services:
   - type: web
     name: apk-builder
@@ -23,7 +26,3 @@ services:
         value: com.builder.app
       - key: APP_NAME
         value: MyApp
-    # No disk: block here on purpose. Job workspaces are meant to be
-    # temporary (cleaned up by jobStore.js's own TTL sweep) — an attached
-    # persistent disk would survive across deploys for no benefit here, and
-    # Render disks also pin you to a single instance (no autoscaling).

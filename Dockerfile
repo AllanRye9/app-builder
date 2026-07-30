@@ -13,12 +13,15 @@ RUN npm run build
 # ---------------------------------------------------------------------------
 # Stage 2: the app server AND the Android build toolchain, in one image
 # ---------------------------------------------------------------------------
-# Render (like Vercel) doesn't expose a host Docker socket to a service, so
-# the "spawn a sibling docker container per build" approach this project
-# used on a VPS can't work here. The fix isn't a workaround — it's that the
+# Most modern hosting platforms (Render, Railway, Fly.io, Google Cloud Run,
+# AWS App Runner, a plain VPS) run a container from a Dockerfile like this
+# one directly — but none of them give a container access to a *host*
+# Docker socket, so a "spawn a sibling docker container per build" approach
+# can't work on any of them. The fix isn't a per-platform workaround — the
 # build toolchain (JDK, Android SDK, Gradle) simply lives in this same
 # image, and src/buildRunner.js runs builds as direct subprocesses instead
-# of `docker run`. One container, one process, no socket needed.
+# of `docker run`. One container, one process, no socket needed, no
+# platform-specific assumptions anywhere in this Dockerfile or in src/.
 FROM node:22-bookworm-slim AS app
 
 # Must be Debian/glibc-based, not Alpine — the Android SDK's prebuilt
@@ -66,14 +69,18 @@ COPY src/ ./src/
 COPY --from=web-build /web/dist ./web/dist
 
 ENV NODE_ENV=production
-# Render's filesystem is ephemeral per-instance, which is exactly what job
-# workspaces want — they're meant to be temporary and get cleaned up by
-# jobStore.js's own TTL sweep regardless.
+# Most container platforms give you an ephemeral filesystem per instance
+# (reset on every deploy/restart) — which is exactly what job workspaces
+# want, since they're meant to be temporary. jobStore.js's own TTL sweep and
+# post-download cleanup already handle removing them during normal
+# operation, so this isn't a gap to work around on any given platform.
 ENV JOB_ROOT=/tmp/apk-builder-jobs
 RUN mkdir -p /tmp/apk-builder-jobs
 
-# Render sets $PORT itself at runtime; this EXPOSE is documentation, not
-# what actually controls the listening port (src/config.js reads
-# process.env.PORT).
+# Most platforms (Render, Railway, Cloud Run, App Runner, etc.) inject a
+# PORT env var and expect the app to listen on it; this EXPOSE is
+# documentation for anyone running the image directly, not what actually
+# controls the listening port (src/config.js reads process.env.PORT, and
+# falls back to 3000 for plain `docker run`/local use).
 EXPOSE 3000
 CMD ["node", "src/index.js"]

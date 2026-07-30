@@ -1,0 +1,29 @@
+# Optional. Only used if you deploy via `fly launch` / `fly deploy`. Every
+# other platform in the README ignores this file.
+app = "apk-builder"
+primary_region = "iad"
+
+[build]
+
+[env]
+  MAX_CONCURRENT_BUILDS = "2"
+  BUILD_TIMEOUT_MS = "900000"
+  MAX_UPLOAD_BYTES = "314572800"
+  JOB_TTL_MS = "3600000"
+  RATE_LIMIT_MAX = "10"
+  RATE_LIMIT_WINDOW_MS = "600000"
+  APP_ID = "com.builder.app"
+  APP_NAME = "MyApp"
+
+[http_service]
+  internal_port = 3000
+  force_https = true
+  auto_stop_machines = false
+  auto_start_machines = true
+  min_machines_running = 1
+
+[[vm]]
+  # Android builds are memory-hungry (Gradle + AGP: 1.5-2.5GB per
+  # concurrent build) — size up from Fly's smallest shared-cpu tiers.
+  size = "shared-cpu-2x"
+  memory = "2gb"
