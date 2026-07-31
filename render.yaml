@@ -1,0 +1,21 @@
+services:
+  - type: web
+    name: apk-builder
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    plan: starter
+    envVars:
+      - key: GITHUB_TOKEN
+        sync: false
+      - key: GITHUB_OWNER
+        sync: false
+      - key: GITHUB_REPO
+        sync: false
+      - key: CALLBACK_SECRET
+        generateValue: true
+      - key: DATA_DIR
+        value: /data
+    disk:
+      name: apk-builder-data
+      mountPath: /data
+      sizeGB: 1
