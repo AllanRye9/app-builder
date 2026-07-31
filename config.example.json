@@ -1,0 +1,13 @@
+{
+  "_comment": "Copy this file to config.json (it's gitignored) and fill in real values. config.json is read fresh on every request, so editing it takes effect immediately without a restart.",
+
+  "githubToken": "",
+  "githubOwner": "",
+  "githubRepo": "",
+
+  "_comment_callbackSecret": "Any random string, e.g. `openssl rand -hex 32` — must match nowhere else, since it's only ever sent as part of the repository_dispatch payload to GitHub. If left blank, the server generates a temporary one at boot so it still works, but that value changes on every restart, invalidating any build in progress at the time. Set a real value for anything beyond quick local testing.",
+  "callbackSecret": "",
+
+  "_comment_dataDir": "Where uploaded zips, built APKs, and job status are stored. Point this at a mounted persistent disk (e.g. a Render Disk mounted at /data) to survive redeploys. If left blank, or if the path isn't writable (e.g. on read-only serverless filesystems like Vercel), the server automatically falls back to a local/temp directory instead — it still works, it just won't persist data between restarts.",
+  "dataDir": ""
+}

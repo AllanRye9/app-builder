@@ -1,9 +1,9 @@
 {
-  "buildCommand": "npm run build",
+  "buildCommand": "node scripts/generate-config.mjs && npm run build",
   "outputDirectory": "dist",
   "functions": {
     "api/index.js": {
-      "includeFiles": "dist/**"
+      "includeFiles": "{dist/**,config.json}"
     }
   },
   "rewrites": [

@@ -1,9 +1,3 @@
-// Load a local .env file if one exists (harmless no-op in prod/hosted
-// environments where there is no .env file and env vars are injected by
-// the platform instead — Render, Vercel, Railway, Fly, Docker, etc. all
-// inject real process.env vars directly, so this only ever helps, never
-// overrides them).
-import 'dotenv/config';
 import express from 'express';
 import multer from 'multer';
 import { randomUUID, randomBytes } from 'crypto';
@@ -12,66 +6,71 @@ import path from 'path';
 import os from 'os';
 import { promises as fs } from 'fs';
 import { initStatusStore, writeStatus, readStatus } from './statusStore.js';
+import { loadConfig, configCandidatePaths } from './config.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
-// --- Env var helpers ------------------------------------------------------
-// Read (and lightly sanitize) an env var. Some dashboards let people paste
-// values with surrounding quotes or trailing whitespace/newlines — trim
-// those so a copy-paste mistake doesn't silently turn into "var is unset".
-function env(name) {
-  const v = process.env[name];
-  if (v == null) return undefined;
-  const trimmed = v.trim().replace(/^['"]|['"]$/g, '');
+// --- Config file helper -----------------------------------------------
+// Trim stray whitespace/quotes so a copy-paste mistake into config.json
+// doesn't silently turn into "field is unset".
+function field(raw) {
+  if (raw == null) return undefined;
+  const trimmed = String(raw).trim().replace(/^['"]|['"]$/g, '');
   return trimmed === '' ? undefined : trimmed;
 }
 
 // CALLBACK_SECRET only has to be known by this server and the workflow run
 // it dispatches — it's handed to GitHub as part of the dispatch payload
 // (see client_payload.callback_secret below), so a value generated here at
-// boot works fine even if it was never set as a real env var. It just
-// won't survive a restart (any in-flight job's callback would then fail),
-// so setting a real CALLBACK_SECRET env var is still recommended for
+// boot works fine even if it was never set in config.json. It just won't
+// survive a restart (any in-flight job's callback would then fail), so
+// setting a real callbackSecret in config.json is still recommended for
 // anything beyond quick local testing.
-const runtimeCallbackSecret = env('CALLBACK_SECRET') ? null : randomBytes(32).toString('hex');
-if (!env('CALLBACK_SECRET')) {
-  console.warn(
-    '[apk-builder] CALLBACK_SECRET is not set — generated a temporary one for this run. ' +
-      'A build dispatched now will use this value, but if the server restarts or cold-starts ' +
-      'before that build finishes (idle spin-down, redeploy, a new serverless instance), the ' +
-      "value changes and the build's callbacks will get 403'd — the job will look stuck at " +
-      '"queued"/"building" forever even though it actually finished on GitHub\'s side. ' +
-      'Set a real CALLBACK_SECRET env var (e.g. `openssl rand -hex 32`) to avoid this.'
-  );
-}
+const runtimeCallbackSecret = randomBytes(32).toString('hex');
 
-// Read fresh from process.env on every call (rather than destructuring
-// once at import time) so this keeps working even if env vars are
-// (re)injected after the module first loads — e.g. some serverless
-// cold-start paths, or env vars set via a platform API after the process
-// has already started.
+// Read fresh from config.json on every call (rather than caching once at
+// import time) so editing the file — rotating a secret, fixing a typo —
+// takes effect immediately, without restarting the process.
 function getConfig() {
+  const cfg = loadConfig();
+  const callbackSecret = field(cfg.callbackSecret);
+  if (!callbackSecret) {
+    console.warn(
+      '[apk-builder] callbackSecret is not set in config.json — generated a temporary one for ' +
+        'this run. A build dispatched now will use this value, but if the server restarts or ' +
+        'cold-starts before that build finishes (idle spin-down, redeploy, a new instance), the ' +
+        "value changes and the build's callbacks will get 403'd — the job will look stuck at " +
+        '"queued"/"building" forever even though it actually finished on GitHub\'s side. ' +
+        'Set a real callbackSecret in config.json (e.g. `openssl rand -hex 32`) to avoid this.'
+    );
+  }
   return {
-    GITHUB_TOKEN: env('GITHUB_TOKEN'),
-    GITHUB_OWNER: env('GITHUB_OWNER'),
-    GITHUB_REPO: env('GITHUB_REPO'),
-    CALLBACK_SECRET: env('CALLBACK_SECRET') || runtimeCallbackSecret,
+    GITHUB_TOKEN: field(cfg.githubToken),
+    GITHUB_OWNER: field(cfg.githubOwner),
+    GITHUB_REPO: field(cfg.githubRepo),
+    CALLBACK_SECRET: callbackSecret || runtimeCallbackSecret,
+    DATA_DIR: field(cfg.dataDir),
+    _usingTemporaryCallbackSecret: !callbackSecret,
+    _configSource: cfg._source,
   };
 }
 
-// On Render, attach a persistent Disk and set DATA_DIR to its mount path
-// (e.g. /data) so uploaded zips, built APKs, and job status all survive
-// redeploys. On platforms with a read-only filesystem (e.g. Vercel, where
-// only /tmp is writable, and even that doesn't persist between
-// invocations), fall back to the OS temp dir instead of crashing at boot.
-const DATA_DIR_CANDIDATES = [
-  env('DATA_DIR'),
-  path.join(__dirname, '..', 'data'),
-  path.join(os.tmpdir(), 'apk-builder-data'),
-].filter(Boolean);
+// On Render, attach a persistent Disk and set "dataDir" in config.json to
+// its mount path (e.g. /data) so uploaded zips, built APKs, and job status
+// all survive redeploys. On platforms with a read-only filesystem (e.g.
+// Vercel, where only /tmp is writable, and even that doesn't persist
+// between invocations), fall back to the OS temp dir instead of crashing
+// at boot.
+function dataDirCandidates() {
+  return [
+    getConfig().DATA_DIR,
+    path.join(__dirname, '..', 'data'),
+    path.join(os.tmpdir(), 'apk-builder-data'),
+  ].filter(Boolean);
+}
 
 async function resolveDataDir() {
-  for (const candidate of DATA_DIR_CANDIDATES) {
+  for (const candidate of dataDirCandidates()) {
     try {
       await fs.mkdir(candidate, { recursive: true });
       // Confirm it's actually writable, not just creatable.
@@ -81,7 +80,7 @@ async function resolveDataDir() {
       console.warn(`[apk-builder] DATA_DIR candidate "${candidate}" isn't usable (${err.code || err.message}), trying the next fallback.`);
     }
   }
-  throw new Error('No writable directory found for DATA_DIR (tried: ' + DATA_DIR_CANDIDATES.join(', ') + ')');
+  throw new Error('No writable directory found for DATA_DIR (tried: ' + dataDirCandidates().join(', ') + ')');
 }
 
 const DIST_DIR = path.join(__dirname, '..', 'dist');
@@ -119,11 +118,11 @@ async function initStorage() {
       fs.mkdir(UPLOADS_DIR, { recursive: true }),
       fs.mkdir(APKS_DIR, { recursive: true }),
     ]);
-    if (dataDir !== env('DATA_DIR') && dataDir.startsWith(os.tmpdir())) {
+    if (dataDir !== getConfig().DATA_DIR && dataDir.startsWith(os.tmpdir())) {
       console.warn(
         `[apk-builder] Using a temporary storage directory (${dataDir}) — uploads, APKs, and job ` +
-          'status will NOT persist across restarts/redeploys. Set DATA_DIR to a persistent, ' +
-          'writable path (e.g. a Render Disk mount) for production use.'
+          'status will NOT persist across restarts/redeploys. Set "dataDir" in config.json to a ' +
+          'persistent, writable path (e.g. a Render Disk mount) for production use.'
       );
     }
   } catch (err) {
@@ -169,26 +168,28 @@ function requireCallbackSecret(req, res, next) {
   next();
 }
 
-// --- Report which required env vars are missing, for the frontend to show
-// a clear banner instead of people only finding out on their first upload.
+// --- Report which required config fields are missing, for the frontend to
+// show a clear banner instead of people only finding out on their first upload.
 app.get('/api/config', (req, res) => {
-  const { GITHUB_TOKEN, GITHUB_OWNER, GITHUB_REPO, CALLBACK_SECRET } = getConfig();
+  const { GITHUB_TOKEN, GITHUB_OWNER, GITHUB_REPO, CALLBACK_SECRET, _usingTemporaryCallbackSecret, _configSource } =
+    getConfig();
   const missing = [];
-  if (!GITHUB_TOKEN) missing.push('GITHUB_TOKEN');
-  if (!GITHUB_OWNER) missing.push('GITHUB_OWNER');
-  if (!GITHUB_REPO) missing.push('GITHUB_REPO');
-  if (!CALLBACK_SECRET) missing.push('CALLBACK_SECRET');
+  if (!GITHUB_TOKEN) missing.push('githubToken');
+  if (!GITHUB_OWNER) missing.push('githubOwner');
+  if (!GITHUB_REPO) missing.push('githubRepo');
+  if (!CALLBACK_SECRET) missing.push('callbackSecret');
   res.status(200).json({
     ready: missing.length === 0 && !dataDirError,
-    missingEnvVars: missing,
+    missingConfigFields: missing,
+    configSource: _configSource,
     storageAvailable: Boolean(UPLOADS_DIR && APKS_DIR),
     storageError: dataDirError,
-    // True when CALLBACK_SECRET was never actually set and this server is
-    // relying on the auto-generated fallback — builds still work, but if
-    // this process restarts/cold-starts mid-build, the secret changes and
-    // that build's callbacks will 403, leaving it stuck at
-    // "queued"/"building" forever. Set a real CALLBACK_SECRET to avoid it.
-    usingTemporaryCallbackSecret: !env('CALLBACK_SECRET'),
+    // True when callbackSecret was never actually set in config.json and
+    // this server is relying on the auto-generated fallback — builds still
+    // work, but if this process restarts/cold-starts mid-build, the secret
+    // changes and that build's callbacks will 403, leaving it stuck at
+    // "queued"/"building" forever. Set a real callbackSecret to avoid it.
+    usingTemporaryCallbackSecret: _usingTemporaryCallbackSecret,
   });
 });
 
@@ -204,7 +205,7 @@ app.post('/api/upload-and-start', (req, res) => {
     );
     if (missing.length > 0) {
       return res.status(500).json({
-        error: `Server is missing ${missing.join(', ')} — set ${missing.length > 1 ? 'these' : 'it'} in your hosting platform's Environment/Variables settings (see README).`,
+        error: `Server is missing ${missing.join(', ')} — set ${missing.length > 1 ? 'these' : 'it'} in config.json (see README).`,
       });
     }
 
@@ -348,10 +349,23 @@ app.get('*', (req, res, next) => {
 // directly per-request — it must not call app.listen() itself there.
 // Everywhere else (Render, Railway, Fly, plain Docker, local `npm start`)
 // this is a normal long-running process, so it does.
-const isServerless = Boolean(env('VERCEL') || env('AWS_LAMBDA_FUNCTION_NAME'));
+//
+// Determined structurally instead of via an env var flag: api/index.js (the
+// Vercel entrypoint) *imports* this module, so `import.meta.url` never
+// equals the process's entry script in that case. Running this file
+// directly — `node server/index.js`, which is what Docker/Render/Railway/
+// Fly/local `npm start` all do — makes them equal.
+const isDirectlyExecuted = process.argv[1] && import.meta.url === `file://${process.argv[1]}`;
 
-if (!isServerless) {
-  const port = Number(env('PORT')) || 3000;
+if (isDirectlyExecuted) {
+  // PORT is the one thing that's still read from process.env rather than
+  // config.json, out of necessity rather than preference: Render/Railway/Fly
+  // etc. each assign a port dynamically per-instance and tell the running
+  // process which one via $PORT — there's no static value that could be
+  // written into a config file ahead of time, since it can change on every
+  // restart. Everything else (secrets, tokens, storage paths) is stable
+  // configuration and lives in config.json instead.
+  const port = Number(process.env.PORT) || 3000;
   storageReady.then(() => {
     app.listen(port, () => {
       console.log(`apk-builder server listening on :${port}`);

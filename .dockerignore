@@ -5,6 +5,5 @@ npm-debug.log
 *.md
 dist
 data
-.env
-.env.*
-!.env.example
+config.json
+!config.example.json

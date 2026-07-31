@@ -169,17 +169,17 @@ function Stat({ value, label, tone }) {
 function getConfigMessage(serverConfig) {
   if (!serverConfig) return '';
   const problems = [];
-  if (serverConfig.missingEnvVars?.length > 0) {
-    problems.push(`missing ${serverConfig.missingEnvVars.join(', ')} environment variable${serverConfig.missingEnvVars.length > 1 ? 's' : ''}`);
+  if (serverConfig.missingConfigFields?.length > 0) {
+    problems.push(`missing ${serverConfig.missingConfigFields.join(', ')} in config.json`);
   }
   if (!serverConfig.storageAvailable) {
     problems.push('no writable storage directory available');
   }
   if (serverConfig.usingTemporaryCallbackSecret) {
-    problems.push('CALLBACK_SECRET is auto-generated and temporary — a build in progress will get stuck if this server restarts before it finishes, set a real CALLBACK_SECRET to fix this');
+    problems.push('callbackSecret is auto-generated and temporary — a build in progress will get stuck if this server restarts before it finishes, set a real callbackSecret in config.json to fix this');
   }
   if (problems.length === 0) return '';
-  return `Server setup isn't finished yet (${problems.join('; ')}) — see the README for the environment variables this needs.`;
+  return `Server setup isn't finished yet (${problems.join('; ')}) — see the README for the config.json fields this needs.`;
 }
 
 function notifyBrowser(title, body) {

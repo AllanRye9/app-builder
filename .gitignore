@@ -1,8 +1,7 @@
 node_modules
 dist
 data
-.env
-.env.*
-!.env.example
+config.json
+!config.example.json
 npm-debug.log
 .DS_Store

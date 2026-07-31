@@ -15,10 +15,12 @@ redeployed. A GitHub Actions runner can't go stale — it's provisioned fresh fr
 `.github/workflows/build-apk.yml` on every run, so whatever is committed to that file *is* what
 runs, always.
 
-The server also has a built-in self-check: `GET /api/config` reports exactly which environment
-variables (if any) are missing and whether it found a writable storage directory, and the
-dashboard shows a banner up front if something's not configured yet — instead of you only finding
-out on your first upload.
+Configuration lives in a `config.json` file (see `config.example.json`) rather than environment
+variables — it's one file you can open and see exactly what's set, and editing it takes effect
+immediately without a restart. The server also has a built-in self-check: `GET /api/config` reports
+exactly which config fields (if any) are missing and whether it found a writable storage directory,
+and the dashboard shows a banner up front if something's not configured yet — instead of you only
+finding out on your first upload.
 
 ```
 Browser (this app)
@@ -66,47 +68,57 @@ Without the Blueprint: **New → Web Service**, runtime **Docker**, root directo
 a Disk (Settings → Disks) mounted at `/data` if you want jobs to survive restarts — optional but
 recommended.
 
-### 4. Set the environment variables
+### 4. Create config.json on the mounted Disk
 
-Render dashboard → your service → **Environment**:
+Render dashboard → your service → **Shell** tab, then:
 
-| Variable | Value |
-|---|---|
-| `GITHUB_TOKEN` | the token from step 2 |
-| `GITHUB_OWNER` | your GitHub username or org |
-| `GITHUB_REPO` | this repo's name |
-| `CALLBACK_SECRET` | only needed if you didn't use the Blueprint — any random string, e.g. `openssl rand -hex 32` |
-| `DATA_DIR` | `/data` if you attached a disk, otherwise omit (defaults to local container storage) |
+```bash
+cat > /data/config.json <<'EOF'
+{
+  "githubToken": "the token from step 2",
+  "githubOwner": "your GitHub username or org",
+  "githubRepo": "this repo's name",
+  "callbackSecret": "any random string, e.g. output of `openssl rand -hex 32`",
+  "dataDir": "/data"
+}
+EOF
+```
 
-Render redeploys automatically after you save environment variable changes.
+`server/config.js` checks `/data/config.json` automatically — no restart needed, it's read fresh
+on every request. `callbackSecret` and `dataDir` both have safe automatic fallbacks if you leave
+them out (see `config.example.json`), but `githubToken`/`githubOwner`/`githubRepo` are genuinely
+required.
 
-Once deployed, visit `https://<your-service>.onrender.com/api/config` (or just open the app —
+Once created, visit `https://<your-service>.onrender.com/api/config` (or just open the app —
 it shows the same thing as a banner) to confirm the server sees everything it needs.
 
 ### Deploying elsewhere
 
 The server (`server/index.js`) is plain Express — it doesn't need Render specifically, only a
 platform that runs a **persistent Node process with a writable filesystem**, since it tracks
-in-flight jobs in memory and stores uploaded zips/APKs on disk. The same `GITHUB_TOKEN`,
-`GITHUB_OWNER`, `GITHUB_REPO`, and `CALLBACK_SECRET` variables from step 4 apply everywhere; each
-platform just has a different place to set them.
+in-flight jobs in memory and stores uploaded zips/APKs on disk. The same four `config.json` fields
+from step 4 apply everywhere; each platform just has a different way of getting the file onto disk.
 
 - **Railway / Fly.io / a plain VPS with Docker**: build from the root `Dockerfile` (same one Render
-  uses), set the same four env vars in that platform's dashboard/CLI, and attach a persistent
-  volume mounted somewhere, then point `DATA_DIR` at it. Without a volume, this still runs — job
-  status/uploads/APKs just don't survive a restart.
+  uses), attach a persistent volume, and put `config.json` on it (bind-mount it in, or shell in and
+  create it the same way as the Render step above) — point `dataDir` at the same volume. Without a
+  volume, this still runs — job status/uploads/APKs just don't survive a restart, and you'd bind-mount
+  `config.json` in directly instead: `docker run -v $(pwd)/config.json:/app/config.json ...`.
 
 - **Vercel**: this repo includes `api/index.js` and `vercel.json` so a `vercel deploy` will boot
   without crashing, but be aware of real limitations before relying on it:
+  - Vercel Functions have no persistent writable filesystem to drop a `config.json` onto at
+    runtime, so this repo's `vercel.json` build step (`scripts/generate-config.mjs`) generates one
+    at **build time** instead, from `GITHUB_TOKEN`/`GITHUB_OWNER`/`GITHUB_REPO`/`CALLBACK_SECRET`
+    set under Project Settings → Environment Variables — that's the one place in this app env vars
+    are still used, purely as a build-time bridge into the config file the server actually reads.
   - Vercel Functions only have a writable `/tmp`, and it's **not guaranteed to persist between
-    invocations** — `DATA_DIR` automatically falls back to a temp directory here, but uploaded
+    invocations** — `dataDir` automatically falls back to a temp directory here, but uploaded
     zips, job status, and finished APKs can disappear between requests on a cold start. Fine for
     kicking the tyres; not fine for real use without wiring in external storage (S3, Vercel Blob,
     a database) in place of the local-disk approach this app uses.
   - Vercel's default request body size limit is smaller than the 200MB this app allows for project
     zips on a real always-on server.
-  - Set the four env vars under Project Settings → Environment Variables — same names, same
-    values, no platform-specific quirks there.
   - For anything beyond quick testing, Render/Railway/Fly (a real persistent process + disk) is a
     better fit for how this app is built.
 
@@ -114,15 +126,15 @@ platform just has a different place to set them.
 
 ```bash
 npm install
-cp .env.example .env   # fill in GITHUB_TOKEN, GITHUB_OWNER, GITHUB_REPO (CALLBACK_SECRET/DATA_DIR
-                        # are optional — sane defaults kick in if you leave them blank)
+cp config.example.json config.json   # fill in githubToken, githubOwner, githubRepo
+                                      # (callbackSecret/dataDir are optional — sane defaults
+                                      # kick in if you leave them blank)
 npm run build   # or: npm run dev, in a second terminal, for the Vite dev server with hot reload
 npm start
 ```
 
-`server/index.js` loads `.env` automatically (via `dotenv`) if one exists, so you don't have to
-prefix every command with env vars — though `GITHUB_TOKEN=... npm start` still works too, and env
-vars set that way always take priority over `.env`.
+`server/config.js` reads `./config.json` fresh on every request — edit the file and the change
+takes effect immediately, no restart needed.
 
 `npm run dev` alone only runs the Vite dev server (proxying `/api` to `:3000`) — `npm start` is
 what actually runs `server/index.js` and serves the `/api/*` routes.
@@ -140,8 +152,8 @@ what actually runs `server/index.js` and serves the `/api/*` routes.
   project uses something else, add it to the list in the "Detect web build output directory" step.
 - **Without a Render Disk**, job status/uploads/APKs live only in the running container and are
   lost on redeploy or restart — fine for light use, attach a Disk (see step 3) if that matters.
-- **Missing/invalid env vars no longer crash the server.** `GITHUB_TOKEN`/`GITHUB_OWNER`/
-  `GITHUB_REPO` are genuinely required (there's no way to auto-generate a GitHub token), so
+- **Missing/invalid config no longer crashes the server.** `githubToken`/`githubOwner`/
+  `githubRepo` are genuinely required (there's no way to auto-generate a GitHub token), so
   uploads fail with a clear error until they're set — but the server itself boots and `/api/config`
-  reports exactly what's missing. `CALLBACK_SECRET` and `DATA_DIR` both have safe automatic
+  reports exactly what's missing. `callbackSecret` and `dataDir` both have safe automatic
   fallbacks if left unset, as described above.
