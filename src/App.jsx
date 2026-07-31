@@ -175,8 +175,11 @@ function getConfigMessage(serverConfig) {
   if (!serverConfig.storageAvailable) {
     problems.push('no writable storage directory available');
   }
+  if (serverConfig.usingTemporaryCallbackSecret) {
+    problems.push('CALLBACK_SECRET is auto-generated and temporary — a build in progress will get stuck if this server restarts before it finishes, set a real CALLBACK_SECRET to fix this');
+  }
   if (problems.length === 0) return '';
-  return `Server setup isn't finished yet (${problems.join('; ')}) — builds won't start until that's fixed. See the README for the environment variables this needs.`;
+  return `Server setup isn't finished yet (${problems.join('; ')}) — see the README for the environment variables this needs.`;
 }
 
 function notifyBrowser(title, body) {

@@ -37,8 +37,11 @@ const runtimeCallbackSecret = env('CALLBACK_SECRET') ? null : randomBytes(32).to
 if (!env('CALLBACK_SECRET')) {
   console.warn(
     '[apk-builder] CALLBACK_SECRET is not set — generated a temporary one for this run. ' +
-      'It will change on every restart, which invalidates any build in progress at the time. ' +
-      "Set CALLBACK_SECRET in your platform's environment settings to avoid that."
+      'A build dispatched now will use this value, but if the server restarts or cold-starts ' +
+      'before that build finishes (idle spin-down, redeploy, a new serverless instance), the ' +
+      "value changes and the build's callbacks will get 403'd — the job will look stuck at " +
+      '"queued"/"building" forever even though it actually finished on GitHub\'s side. ' +
+      'Set a real CALLBACK_SECRET env var (e.g. `openssl rand -hex 32`) to avoid this.'
   );
 }
 
@@ -84,6 +87,13 @@ async function resolveDataDir() {
 const DIST_DIR = path.join(__dirname, '..', 'dist');
 
 const app = express();
+// Render, Vercel, Railway, Fly, etc. all sit behind a reverse proxy —
+// without this, req.protocol reports 'http' even for real https requests
+// (Express only trusts X-Forwarded-Proto/X-Forwarded-Host when told to),
+// which corrupts the callbackBase/zipUrl URLs handed to the GitHub Actions
+// runner below and can cause its callbacks back to this server to silently
+// fail, leaving jobs stuck at "queued"/"building" forever.
+app.set('trust proxy', true);
 app.use(express.json());
 
 // These are filled in once resolveDataDir() finishes, kicked off just
@@ -173,6 +183,12 @@ app.get('/api/config', (req, res) => {
     missingEnvVars: missing,
     storageAvailable: Boolean(UPLOADS_DIR && APKS_DIR),
     storageError: dataDirError,
+    // True when CALLBACK_SECRET was never actually set and this server is
+    // relying on the auto-generated fallback — builds still work, but if
+    // this process restarts/cold-starts mid-build, the secret changes and
+    // that build's callbacks will 403, leaving it stuck at
+    // "queued"/"building" forever. Set a real CALLBACK_SECRET to avoid it.
+    usingTemporaryCallbackSecret: !env('CALLBACK_SECRET'),
   });
 });
 
