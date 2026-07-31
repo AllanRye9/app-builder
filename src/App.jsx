@@ -1,16 +1,24 @@
-import { useCallback, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import Dropzone from './components/Dropzone.jsx';
 import JobTicket from './components/JobTicket.jsx';
 import ToastStack from './components/ToastStack.jsx';
-import { uploadAndStartBuild } from './api.js';
+import ErrorBanner from './components/ErrorBanner.jsx';
+import { uploadAndStartBuild, fetchServerConfig } from './api.js';
 
 let nextTempId = 0;
 
 export default function App() {
   const [jobs, setJobs] = useState([]);
   const [notices, setNotices] = useState([]);
+  const [serverConfig, setServerConfig] = useState(null);
   const nextNoticeId = useRef(0);
   const notifyAsked = useRef(false);
+
+  useEffect(() => {
+    fetchServerConfig().then(setServerConfig);
+  }, []);
+
+  const configMessage = getConfigMessage(serverConfig);
 
   const pushToast = useCallback((payload) => {
     nextNoticeId.current += 1;
@@ -95,14 +103,15 @@ export default function App() {
       <ToastStack notices={notices} onDismiss={dismissToast} />
 
       <header className="floor-header">
-        <div className="eyebrow"><span className="dot" />apk-builder — runs on Vercel + GitHub Actions</div>
+        <div className="eyebrow"><span className="dot" />apk-builder — one server + GitHub Actions</div>
         <h1>Turn React projects into APKs, all at once</h1>
         <p className="sub">
           Drop in as many project archives as you like. Each one builds on a fresh GitHub Actions
-          runner — no server here to keep alive, no image to go stale, nothing to redeploy when a
-          new one starts.
+          runner — no image to go stale, nothing to redeploy when a new one starts.
         </p>
       </header>
+
+      <ErrorBanner message={configMessage} />
 
       <Dropzone onFilesSelected={handleFilesSelected} />
 
@@ -155,6 +164,19 @@ function Stat({ value, label, tone }) {
       <span className="stat-label">{label}</span>
     </div>
   );
+}
+
+function getConfigMessage(serverConfig) {
+  if (!serverConfig) return '';
+  const problems = [];
+  if (serverConfig.missingEnvVars?.length > 0) {
+    problems.push(`missing ${serverConfig.missingEnvVars.join(', ')} environment variable${serverConfig.missingEnvVars.length > 1 ? 's' : ''}`);
+  }
+  if (!serverConfig.storageAvailable) {
+    problems.push('no writable storage directory available');
+  }
+  if (problems.length === 0) return '';
+  return `Server setup isn't finished yet (${problems.join('; ')}) — builds won't start until that's fixed. See the README for the environment variables this needs.`;
 }
 
 function notifyBrowser(title, body) {
