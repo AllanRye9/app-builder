@@ -108,9 +108,21 @@ async function runBuild(job) {
     return new Promise((resolve, reject) => {
       log(job, `$ ${command} ${args.join(' ')}`);
 
+      // This server's own container has NODE_ENV=production set (see
+      // Dockerfile) — but that must NOT leak into the uploaded project's
+      // own npm install/build. npm treats NODE_ENV=production as "skip
+      // devDependencies", and a project's build tool (vite, react-scripts,
+      // webpack-cli, ...) almost always lives in devDependencies by
+      // convention. Left inherited, every uploaded project's build tool
+      // would silently never get installed, and `npm run build` would fail
+      // with "command not found" (exit 127) — which is exactly what this
+      // fixes.
+      const childEnv = { ...process.env, ...(opts.env || {}) };
+      delete childEnv.NODE_ENV;
+
       const child = spawn(command, args, {
         cwd: opts.cwd || projectDir,
-        env: { ...process.env, ...(opts.env || {}) },
+        env: childEnv,
         detached: true, // own process group, so a timeout kill can take any subprocesses it forked with it
       });
       currentChild = child;
