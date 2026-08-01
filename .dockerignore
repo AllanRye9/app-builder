@@ -3,7 +3,7 @@ npm-debug.log
 .git
 .gitignore
 *.md
-dist
-data
-config.json
-!config.example.json
+.jobs
+web/node_modules
+web/dist
+docker/android-build/node_modules

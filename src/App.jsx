@@ -1,24 +1,16 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useRef, useState } from 'react';
 import Dropzone from './components/Dropzone.jsx';
 import JobTicket from './components/JobTicket.jsx';
 import ToastStack from './components/ToastStack.jsx';
-import ErrorBanner from './components/ErrorBanner.jsx';
-import { uploadAndStartBuild, fetchServerConfig } from './api.js';
+import { uploadAndStartBuild } from './api.js';
 
 let nextTempId = 0;
 
 export default function App() {
   const [jobs, setJobs] = useState([]);
   const [notices, setNotices] = useState([]);
-  const [serverConfig, setServerConfig] = useState(null);
   const nextNoticeId = useRef(0);
   const notifyAsked = useRef(false);
-
-  useEffect(() => {
-    fetchServerConfig().then(setServerConfig);
-  }, []);
-
-  const configMessage = getConfigMessage(serverConfig);
 
   const pushToast = useCallback((payload) => {
     nextNoticeId.current += 1;
@@ -62,6 +54,7 @@ export default function App() {
           status: 'uploading',
           error: null,
           apkUrl: null,
+          runUrl: null,
         },
         ...prev,
       ]);
@@ -102,16 +95,14 @@ export default function App() {
       <ToastStack notices={notices} onDismiss={dismissToast} />
 
       <header className="floor-header">
-        <div className="eyebrow"><span className="dot" />apk-builder — local, ephemeral Docker builds</div>
+        <div className="eyebrow"><span className="dot" />apk-builder — runs on Vercel + GitHub Actions</div>
         <h1>Turn React projects into APKs, all at once</h1>
         <p className="sub">
-          Drop in as many project archives as you like. Each one builds inside its own short-lived
-          Docker container on this server — the uploaded project, build output, and the finished
-          APK are all deleted automatically a few minutes after the build finishes.
+          Drop in as many project archives as you like. Each one builds on a fresh GitHub Actions
+          runner — no server here to keep alive, no image to go stale, nothing to redeploy when a
+          new one starts.
         </p>
       </header>
-
-      <ErrorBanner message={configMessage} />
 
       <Dropzone onFilesSelected={handleFilesSelected} />
 
@@ -151,8 +142,7 @@ export default function App() {
       </div>
 
       <footer className="app-footer">
-        Builds run in an ephemeral Docker container on this server, with a timeout and an
-        automatic data-retention window (both configurable) — everything is torn down after each job.
+        Builds run on GitHub-hosted Ubuntu runners with a 20-minute timeout, torn down after each job.
       </footer>
     </main>
   );
@@ -165,19 +155,6 @@ function Stat({ value, label, tone }) {
       <span className="stat-label">{label}</span>
     </div>
   );
-}
-
-function getConfigMessage(serverConfig) {
-  if (!serverConfig) return '';
-  const problems = [];
-  if (!serverConfig.dockerAvailable) {
-    problems.push("the server can't reach a Docker daemon");
-  }
-  if (serverConfig.dockerAvailable && !serverConfig.buildImageAvailable) {
-    problems.push(`the build image "${serverConfig.buildImage}" hasn't been built yet`);
-  }
-  if (problems.length === 0) return '';
-  return `Server setup isn't finished yet (${problems.join('; ')}) — see the README's Docker setup section.`;
 }
 
 function notifyBrowser(title, body) {

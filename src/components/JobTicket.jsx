@@ -16,6 +16,7 @@ export default function JobTicket({ job, onUpdate, onDone, onRemove }) {
           status: data.status,
           error: data.error || null,
           apkUrl: data.apkUrl || null,
+          runUrl: data.runUrl || job.runUrl || null,
         });
       },
       onDone: (data) => {
@@ -59,6 +60,12 @@ export default function JobTicket({ job, onUpdate, onDone, onRemove }) {
 
         {job.status === 'success' && job.apkUrl && (
           <DownloadCard apkUrl={job.apkUrl} filename={job.fileName} />
+        )}
+
+        {job.runUrl && (
+          <a className="log-toggle" href={job.runUrl} target="_blank" rel="noreferrer">
+            <span aria-hidden="true">↗</span> View full build log on GitHub
+          </a>
         )}
       </div>
     </article>

@@ -1,22 +1,20 @@
 {
-  "name": "apk-builder",
+  "name": "apk-builder-vercel",
   "private": true,
   "version": "1.0.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "preview": "vite preview",
-    "start": "node server/index.js"
+    "preview": "vite preview"
   },
   "dependencies": {
-    "express": "^4.21.2",
-    "multer": "^2.0.1",
+    "@vercel/blob": "^0.27.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1"
   },
   "devDependencies": {
-    "@vitejs/plugin-react": "4.3.4",
-    "vite": "5.4.21"
+    "@vitejs/plugin-react": "^4.3.1",
+    "vite": "^5.4.1"
   }
 }
