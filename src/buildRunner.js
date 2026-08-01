@@ -110,13 +110,20 @@ async function runBuild(job) {
 
       // This server's own container has NODE_ENV=production set (see
       // Dockerfile) — but that must NOT leak into the uploaded project's
-      // own npm install/build. npm treats NODE_ENV=production as "skip
+      // own npm install/build. npm can treat NODE_ENV=production as "skip
       // devDependencies", and a project's build tool (vite, react-scripts,
       // webpack-cli, ...) almost always lives in devDependencies by
       // convention. Left inherited, every uploaded project's build tool
       // would silently never get installed, and `npm run build` would fail
-      // with "command not found" (exit 127) — which is exactly what this
-      // fixes.
+      // with "command not found" (exit 127).
+      //
+      // Deleting NODE_ENV here is defense in depth, but it's not sufficient
+      // on its own — omission of devDependencies can also come from an
+      // .npmrc (project-level or baked into the image) or an
+      // NPM_CONFIG_PRODUCTION/NPM_CONFIG_OMIT env var, neither of which this
+      // deletion touches. The actual fix is forcing `--include=dev` on the
+      // install/ci call below, which overrides any of those sources —
+      // see the call site.
       const childEnv = { ...process.env, ...(opts.env || {}) };
       delete childEnv.NODE_ENV;
 
@@ -172,7 +179,12 @@ async function runBuild(job) {
     setStatus(job, 'building');
 
     const hasLockfile = fs.existsSync(path.join(projectDir, 'package-lock.json'));
-    await run('npm', hasLockfile ? ['ci'] : ['install']);
+    // --include=dev is explicit and outranks any NODE_ENV, .npmrc
+    // "production=true"/"omit=dev", or NPM_CONFIG_* env var that might
+    // otherwise cause devDependencies (the project's own build tool) to be
+    // skipped — see the comment on childEnv above for why relying on
+    // deleting NODE_ENV alone isn't enough.
+    await run('npm', [...(hasLockfile ? ['ci'] : ['install']), '--include=dev']);
     await run('npm', ['run', 'build']);
 
     const webDir = detectWebDir(projectDir);
