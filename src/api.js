@@ -1,8 +1,7 @@
-// Checks whether the server has everything it needs (GITHUB_TOKEN,
-// GITHUB_OWNER, GITHUB_REPO, CALLBACK_SECRET, and a writable storage
-// directory) so the UI can show a clear setup banner up front, instead of
-// people only finding out something's missing after their first upload
-// fails.
+// Checks whether the server can actually run a build right now (it can
+// reach a Docker daemon, and the build image has been built) so the UI can
+// show a clear setup banner up front, instead of people only finding out
+// something's missing after their first upload fails.
 export async function fetchServerConfig() {
   try {
     const res = await fetch('/api/config', { cache: 'no-store' });
@@ -15,7 +14,7 @@ export async function fetchServerConfig() {
 
 // Uploads the project zip directly to this app's own server (a real,
 // long-running process — not a stateless Function with a 4.5MB body cap),
-// which saves it, kicks off the GitHub Actions build, and returns a job id.
+// which saves it, kicks off a local Docker build, and returns a job id.
 export async function uploadAndStartBuild(file) {
   const formData = new FormData();
   formData.append('file', file);
@@ -39,9 +38,9 @@ export async function uploadAndStartBuild(file) {
   return data.jobId;
 }
 
-// No long-lived connection to hold open here — GitHub Actions runs happen
-// on infrastructure this app doesn't control the lifetime of, so polling a
-// small stateless status endpoint is the right fit, not SSE.
+// No long-lived connection to hold open here — polling a small stateless
+// status endpoint is simpler than SSE/websockets for this, and copes fine
+// with the browser tab going away mid-build.
 export function pollStatus(jobId, { onUpdate, onDone }, intervalMs = 3000) {
   let stopped = false;
   let timer = null;

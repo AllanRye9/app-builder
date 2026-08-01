@@ -24,11 +24,10 @@ const CONFIG_CANDIDATES = [
 ];
 
 // Re-read from disk on every call (rather than caching at import time) so
-// editing config.json — e.g. rotating CALLBACK_SECRET, or updating
-// GITHUB_TOKEN after a PAT expires — takes effect immediately without
-// restarting the process. It's a small sync file read on an
-// infrequently-called path (config lookups, not per-upload), so this cost
-// is negligible.
+// editing config.json — e.g. switching buildImage, or adjusting
+// retentionMinutes — takes effect immediately without restarting the
+// process. It's a small sync file read on an infrequently-called path
+// (config lookups, not per-upload), so this cost is negligible.
 export function loadConfig() {
   for (const p of CONFIG_CANDIDATES) {
     if (existsSync(p)) {

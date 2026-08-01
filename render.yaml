@@ -1,19 +1,24 @@
-# Secrets (githubToken, githubOwner, githubRepo, callbackSecret) and
-# dataDir live in config.json on the mounted Disk below, not as Render
-# env vars — see config.example.json. After the first deploy, open the
-# service's "Shell" tab in the Render dashboard and create /data/config.json
-# (server/config.js checks that path automatically):
-#   cat > /data/config.json <<'EOF'
-#   { "githubToken": "...", "githubOwner": "...", "githubRepo": "...",
-#     "callbackSecret": "...", "dataDir": "/data" }
-#   EOF
+# IMPORTANT: this app now runs Android builds in a locally-launched Docker
+# container (server/dockerBuild.js shells out to the `docker` CLI directly)
+# instead of dispatching to GitHub Actions. Render's standard web service
+# runtime does not expose a Docker daemon or /var/run/docker.sock to your
+# container, so a deploy from this blueprint CANNOT actually run builds —
+# /api/config will report dockerAvailable: false and uploads will be
+# rejected with a clear error.
+#
+# This file is left here in case it's useful for hosting just the static
+# dashboard/API shell, but for real use, run the server directly on a host
+# that has Docker installed (a bare VPS or local machine — see the README's
+# "Running the build locally with Docker" section) rather than via this
+# blueprint.
+#
+# No secrets/config.json setup is required anymore — there's no
+# githubToken/githubOwner/githubRepo/callbackSecret/dataDir to configure.
+# config.json is entirely optional now; every field has a safe default
+# (see config.example.json).
 services:
   - type: web
     name: apk-builder
     runtime: docker
     dockerfilePath: ./Dockerfile
     plan: starter
-    disk:
-      name: apk-builder-data
-      mountPath: /data
-      sizeGB: 1

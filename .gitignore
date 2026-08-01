@@ -1,7 +1,0 @@
-node_modules
-dist
-data
-config.json
-!config.example.json
-npm-debug.log
-.DS_Store

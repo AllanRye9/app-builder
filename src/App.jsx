@@ -62,7 +62,6 @@ export default function App() {
           status: 'uploading',
           error: null,
           apkUrl: null,
-          runUrl: null,
         },
         ...prev,
       ]);
@@ -103,11 +102,12 @@ export default function App() {
       <ToastStack notices={notices} onDismiss={dismissToast} />
 
       <header className="floor-header">
-        <div className="eyebrow"><span className="dot" />apk-builder — one server + GitHub Actions</div>
+        <div className="eyebrow"><span className="dot" />apk-builder — local, ephemeral Docker builds</div>
         <h1>Turn React projects into APKs, all at once</h1>
         <p className="sub">
-          Drop in as many project archives as you like. Each one builds on a fresh GitHub Actions
-          runner — no image to go stale, nothing to redeploy when a new one starts.
+          Drop in as many project archives as you like. Each one builds inside its own short-lived
+          Docker container on this server — the uploaded project, build output, and the finished
+          APK are all deleted automatically a few minutes after the build finishes.
         </p>
       </header>
 
@@ -151,7 +151,8 @@ export default function App() {
       </div>
 
       <footer className="app-footer">
-        Builds run on GitHub-hosted Ubuntu runners with a 20-minute timeout, torn down after each job.
+        Builds run in an ephemeral Docker container on this server, with a timeout and an
+        automatic data-retention window (both configurable) — everything is torn down after each job.
       </footer>
     </main>
   );
@@ -169,17 +170,14 @@ function Stat({ value, label, tone }) {
 function getConfigMessage(serverConfig) {
   if (!serverConfig) return '';
   const problems = [];
-  if (serverConfig.missingConfigFields?.length > 0) {
-    problems.push(`missing ${serverConfig.missingConfigFields.join(', ')} in config.json`);
+  if (!serverConfig.dockerAvailable) {
+    problems.push("the server can't reach a Docker daemon");
   }
-  if (!serverConfig.storageAvailable) {
-    problems.push('no writable storage directory available');
-  }
-  if (serverConfig.usingTemporaryCallbackSecret) {
-    problems.push('callbackSecret is auto-generated and temporary — a build in progress will get stuck if this server restarts before it finishes, set a real callbackSecret in config.json to fix this');
+  if (serverConfig.dockerAvailable && !serverConfig.buildImageAvailable) {
+    problems.push(`the build image "${serverConfig.buildImage}" hasn't been built yet`);
   }
   if (problems.length === 0) return '';
-  return `Server setup isn't finished yet (${problems.join('; ')}) — see the README for the config.json fields this needs.`;
+  return `Server setup isn't finished yet (${problems.join('; ')}) — see the README's Docker setup section.`;
 }
 
 function notifyBrowser(title, body) {

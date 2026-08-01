@@ -1,5 +1,5 @@
 {
-  "buildCommand": "node scripts/generate-config.mjs && npm run build",
+  "buildCommand": "npm run build",
   "outputDirectory": "dist",
   "functions": {
     "api/index.js": {
