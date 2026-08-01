@@ -1,129 +1,104 @@
-# apk-builder (Docker Compose edition)
+# apk-builder (Render edition)
 
-Turns a React project zip into a downloadable debug APK. Drop in as many project archives as you
-like — each one builds in its own isolated, disposable Docker container with a pre-configured
-Android SDK, with live log streaming and a small build queue so uploads never block on each other.
+Turns a React project zip into a downloadable debug APK. This version runs as a **single Docker
+service on Render** — one container has the Express server, the React dashboard, and the full
+Android build toolchain (JDK 21, Android SDK, Gradle) all in one image.
 
-- **`src/index.js`** (Express) serves the dashboard, accepts uploads, validates each project,
-  queues/runs its build, and streams progress back over Server-Sent Events.
-- **`docker/android-build/`** is the disposable build image (JDK 21, Node 22, Android SDK) — a
-  fresh container per job, removed the moment it exits.
-- **`docker-compose.yml`** wires the two together: `src/index.js` talks to the **host's** Docker
-  daemon over a bind-mounted socket (Docker-outside-of-Docker) to launch build containers as
-  siblings, not children, of its own container.
-- **Nothing persists.** Each job gets its own directory under `.jobs/`; the build container itself
-  is `--rm`'d on exit; and the whole per-job directory (uploaded zip, extracted project, build
-  output, finished APK) is deleted automatically `RETENTION_MINUTES` (default 5) after the job
-  finishes, success or failure.
+## Why this is a different architecture from the VPS/docker-compose version
+
+The original version span up a **sibling** Docker container per build (`docker run ...`) by
+talking to the host's Docker daemon. That requires either a real VPS with Docker installed, or a
+mounted `/var/run/docker.sock` — neither of which Render (or Vercel, or most PaaS platforms)
+exposes to a service. Trying to deploy that version here produces exactly the kind of failure you
+just hit: the image either can't find the Docker socket at all, or (as happened) the Dockerfile
+built for that architecture doesn't even match this project's layout.
+
+The fix isn't a workaround for that constraint — it's a different, equally valid architecture:
+**the build toolchain lives in the same container as the app**, and `src/buildRunner.js` runs each
+build as a direct subprocess (`npm install`, `npm run build`, `npx cap add android`,
+`./gradlew assembleDebug`) instead of spawning a sibling container. Same build steps, same
+dashboard, no socket required.
 
 ```
-Browser (the dashboard)
-   │  1. POST /api/upload — multipart, field name "zip"
-   ▼
-src/index.js (Express, one process)
-   │  extracts + validates the project (package.json present, no
-   │  pre-existing android/ or ios/ folder), queues it behind
-   │  MAX_CONCURRENT_BUILDS other builds if needed, then runs:
-   ▼
-docker run --rm apk-builder-android   (src/dockerRunner.js)
-   │  mounts the extracted project at /project (read-write — Capacitor
-   │  writes into it) and an empty /output; docker/android-build/build.sh:
-   │  npm install → npm run build → cap init/add android →
-   │  gradlew assembleDebug → copies app.apk to /output
-   ▼
-Browser subscribes to GET /api/logs/:jobId/stream (SSE) the moment it has
-   a jobId — "message" events are raw log lines, "notice" events are
-   dismissible toasts, "status"/"queue" events drive the pipeline stepper,
-   a "done" event ends the stream. GET /api/download/:jobId serves the
-   APK once status is "success" — then ~5 minutes later, the job's entire
-   directory is deleted automatically.
+Render Web Service (one Docker container)
+├── Express server (src/) — serves the React dashboard as static files + the API
+├── React dashboard (web/) — same multi-job ticket UI as before
+└── Build toolchain (JDK 21, Android SDK, Node 22, Gradle) — baked into the same image
+        │
+        ▼
+   src/buildRunner.js spawns build steps as direct subprocesses per job,
+   bounded by MAX_CONCURRENT_BUILDS, all sharing this one container's CPU/RAM
 ```
 
-## One-time setup
+## Deploying
 
-### 1. Install Docker (with Compose)
+### Option A: Blueprint (one click)
 
-[docs.docker.com/engine/install](https://docs.docker.com/engine/install/) — `docker compose
-version` should succeed.
+This repo includes `render.yaml`. In Render: **New → Blueprint**, point it at this repo, and it
+reads the service definition automatically — plan, health check, env vars are all pre-filled.
 
-### 2. Run it
+### Option B: Manual
 
-```bash
-docker compose up --build
-```
+**New → Web Service** → connect this repo → set:
+- **Runtime**: Docker
+- **Dockerfile Path**: `./Dockerfile`
+- **Root Directory**: leave blank (repo root) — this is the most common cause of a "Cannot find
+  module" crash like the one that led here: if Root Directory points anywhere other than where
+  this `Dockerfile` and `src/` actually live in your repo, the build context won't include them.
 
-This one command builds both images (`apk-builder-android` from `docker/android-build/`, and the
-app itself from the root `Dockerfile`, which in turn builds `web/` and copies its output in) and
-starts the `app` service. First run is slow — the Android build image downloads several hundred MB
-(JDK, Node, Android SDK). Visit `http://localhost:3000`.
+## Sizing — this is the one thing that's genuinely different from before
 
-`docker-compose.yml` mounts `/var/run/docker.sock` into the `app` container so it can launch
-Android build containers as siblings, and mounts `./.jobs` in at `/workspace/jobs` for job data —
-see the comments at the top of that file for why `HOST_JOB_ROOT` matters here (it's what makes
-Docker-outside-of-Docker work at all: the `app` container's `docker run -v <path>` calls are
-actually executed by the **host's** daemon, which can't see paths that only exist inside `app`'s
-own container filesystem).
+Every build's CPU and memory now comes directly out of **this one container's** resources — there's
+no more per-job Docker `--memory`/`--cpus` cap, because there's no more sibling container to cap.
+Gradle + the Android Gradle Plugin alone routinely use 1.5–2.5GB per concurrent build.
 
-### Running without Docker Compose
+- `MAX_CONCURRENT_BUILDS` defaults to **2**. Don't raise it without also sizing up the Render plan
+  — this is a real ceiling, not a suggestion. Render's **Standard** plan (2GB RAM) comfortably
+  handles 1–2 concurrent builds; go **Pro** or higher before raising this further.
+- Job workspaces live in `/tmp` (ephemeral, cleared on every deploy/restart) — this is intentional,
+  not a gap. They're meant to be temporary; `jobStore.js`'s own TTL sweep and post-download cleanup
+  already handle removing them during normal operation.
 
-You don't strictly need Compose — `src/index.js` is a plain Express process. Build the Android
-image once (`docker build -t apk-builder-android docker/android-build`), build the dashboard
-(`cd web && npm install && npm run build`), install the root deps (`npm install`), and run
-`npm start`. On a bare VPS/local machine (not itself containerized), no `HOST_JOB_ROOT` /
-`docker.sock` mount is needed at all — `docker run -v <path>` from a plain host process already
-sees the same filesystem as the Docker daemon.
+## Environment variables
 
-### Deploying to Render
+All optional, all have defaults in `render.yaml` / `src/config.js`:
 
-`render.yaml` is included — **New → Blueprint** in the Render dashboard, point it at this repo.
-
-This deploys the dashboard/API (`app` service, Docker runtime, from the root `Dockerfile`) and it
-will come up fine, but **actual builds will not work on Render**: Render does not allow privileged
-containers or a mounted host Docker socket on any service type (confirmed by Render's own support
-— see the comment at the top of `render.yaml`), and this app's build step fundamentally requires
-one (Docker-outside-of-Docker, same as the `docker-compose.yml` setup above). `GET
-/api/system-status` will report `dockerAvailable: false` there, and uploads will be rejected with
-a clear error rather than hanging.
-
-If you want this actually building APKs, deploy it on a host that has Docker installed directly —
-a bare VPS or your own machine, via `docker compose up` or the plain `npm start` path above — not
-Render (or Vercel, or any platform whose containers can't reach a real Docker daemon).
-
-### Configuration
-
-Everything is an environment variable (see `docker-compose.yml`'s `environment:` block for what's
-already set), not a config file:
-
-| Variable | Default | Meaning |
+| Variable | Default | Notes |
 |---|---|---|
-| `PORT` | `3000` | What the server listens on |
-| `DOCKER_IMAGE` | `apk-builder-android:latest` | Which image to run per build |
-| `JOB_ROOT` | OS temp dir | Where this process sees per-job directories |
-| `HOST_JOB_ROOT` | *(unset)* | `JOB_ROOT`'s path as seen by the **host** Docker daemon — only needed in the Docker-outside-of-Docker setup `docker-compose.yml` uses |
-| `CORS_ORIGIN` | `*` | For running the dashboard on a different origin from the API |
-| `MAX_CONCURRENT_BUILDS` | `2` | Builds beyond this queue, with a live position shown in the UI |
-| `BUILD_TIMEOUT_MINUTES` | `20` | A build container is killed and the job marked failed past this |
-| `RETENTION_MINUTES` | `5` | How long a finished job's files are kept before automatic deletion |
-| `DOCKER_BIN` | `docker` | Override if the Docker CLI isn't on `PATH` under this name |
+| `MAX_CONCURRENT_BUILDS` | `2` | See sizing note above — this is a hard shared-resource ceiling now |
+| `BUILD_TIMEOUT_MS` | `900000` (15 min) | Kills the whole build if any single step hangs |
+| `MAX_UPLOAD_BYTES` | `314572800` (300MB) | Max accepted zip size |
+| `JOB_TTL_MS` | `3600000` (1 hr) | How long a finished job's files stick around |
+| `RATE_LIMIT_MAX` / `RATE_LIMIT_WINDOW_MS` | `10` / `600000` | Per-IP upload rate limit |
+| `APP_ID` / `APP_NAME` | `com.builder.app` / `MyApp` | Baked into every generated APK — same for all uploads by default |
+| `CORS_ORIGIN` | `*` | Only matters if you split the frontend out separately later |
 
-`GET /api/system-status` reports whether the server can actually reach Docker and whether the
-build image has been built — worth checking first if uploads are failing immediately.
+## The Android SDK download — the one external version dependency
 
-## Known trade-offs
+The Dockerfile downloads a specific, pinned build of Android's command-line tools from Google's
+CDN (`CMDLINE_TOOLS_VERSION` build arg, defaulting to `11076708`). Google does occasionally retire
+old build numbers. If the image build ever fails specifically at the
+`curl ... commandlinetools-linux-...` step:
 
-- **`android/`/`ios/` folders are rejected up front.** The build always generates these fresh via
-  `cap add android` — a project that already has one is refused during the "Validate" stage with a
-  clear error, rather than silently conflicting later in the build.
-- **APK filename is fixed** (`app.apk` inside the container, per `build.sh`) — the download gets a
-  nicer name derived from the uploaded zip's filename, but there's one fixed slot per job, not
-  per-flavor/variant output.
-- **Root-level `src/`, `index.html`, `vite.config.js`, `vercel.json`, `.env.example`, and
-  `android-build/`** are leftovers from an earlier iteration of this project (a Vercel + GitHub
-  Actions edition, and an older duplicate of `docker/android-build/`) and are **not** used by
-  `docker-compose.yml`/the root `Dockerfile` — the actual frontend is `web/`, and the actual build
-  image is `docker/android-build/`. They're left in place rather than deleted outright, but if
-  you're maintaining this repo going forward, removing them would avoid confusion for whoever
-  edits it next.
-- **One Docker daemon, one queue.** `MAX_CONCURRENT_BUILDS` caps this one process's own concurrency
-  but there's no cross-process/cross-replica coordination — don't run more than one replica of the
-  `app` service against the same Docker daemon without accounting for that.
+1. Check [developer.android.com/studio#command-line-tools-only](https://developer.android.com/studio#command-line-tools-only) for the current filename.
+2. In Render → your service → **Environment** → add a build arg, or edit the `ARG
+   CMDLINE_TOOLS_VERSION` line in the Dockerfile directly and redeploy.
+
+This is deliberately the *only* place in the whole setup with an external version pin like this —
+kept isolated here on purpose so it's a one-line fix if it ever goes stale, not a mystery buried in
+a build log.
+
+## What's genuinely different from the previous versions
+
+- **No live Docker log streaming quirks to fight** — since builds run as direct subprocesses in
+  this same process (not an external container we parse `##NOTICE##` markers out of),
+  `buildRunner.js` calls the job log/status functions directly at each step. Simpler and more
+  robust than the Docker version's approach, not just a substitute for it.
+- **Render auto-deploys on push** (if enabled, which it is by default for a connected repo) — so
+  the "fixed the code but never redeployed" failure mode that caused most of the pain in the
+  VPS/docker-compose version is structurally much less likely here, though not impossible (you can
+  still disable auto-deploy or push to the wrong branch).
+- **No per-job resource isolation** — the real trade-off versus the Docker-orchestrator version.
+  Mitigated by `MAX_CONCURRENT_BUILDS` and `BUILD_TIMEOUT_MS`, but a single runaway build can still
+  affect others sharing the container. Acceptable for moderate volume; genuinely worth reconsidering
+  a dedicated-VM-per-build architecture if this needs to scale to heavy concurrent load.

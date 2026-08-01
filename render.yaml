@@ -1,29 +1,29 @@
-# IMPORTANT: this app's Android builds only work via Docker-outside-of-Docker
-# — src/index.js shells out to the `docker` CLI over a bind-mounted
-# /var/run/docker.sock to launch build containers as siblings of its own
-# (see docker-compose.yml's top comment). Render does not allow privileged
-# mode or a mounted host Docker socket on any service type — confirmed via
-# Render's own support (https://community.render.com/t/run-docker-container-in-privileged-mode/1814,
-# "we do not allow Render services to run docker in privileged mode").
-#
-# A deploy from this blueprint will start and serve the dashboard, but
-# GET /api/system-status will report dockerAvailable: false and every
-# upload will be rejected with a clear error — there is no way to make the
-# actual build step work on Render as this app is architected. For real use,
-# run this on a host that has Docker installed directly (a bare VPS/local
-# machine — see the README's "Running without Docker Compose" section) or
-# via `docker compose up` on such a host.
-#
-# This blueprint is provided in case hosting just the dashboard/API shell
-# on Render is useful to you regardless.
 services:
   - type: web
     name: apk-builder
     runtime: docker
     dockerfilePath: ./Dockerfile
-    plan: starter
+    dockerContext: .
+    plan: standard
+    healthCheckPath: /api/health
     envVars:
-      - key: PORT
-        value: 3000
-      - key: CORS_ORIGIN
-        value: "*"
+      - key: MAX_CONCURRENT_BUILDS
+        value: "2"
+      - key: BUILD_TIMEOUT_MS
+        value: "900000"
+      - key: MAX_UPLOAD_BYTES
+        value: "314572800"
+      - key: JOB_TTL_MS
+        value: "3600000"
+      - key: RATE_LIMIT_MAX
+        value: "10"
+      - key: RATE_LIMIT_WINDOW_MS
+        value: "600000"
+      - key: APP_ID
+        value: com.builder.app
+      - key: APP_NAME
+        value: MyApp
+    # No disk: block here on purpose. Job workspaces are meant to be
+    # temporary (cleaned up by jobStore.js's own TTL sweep) — an attached
+    # persistent disk would survive across deploys for no benefit here, and
+    # Render disks also pin you to a single instance (no autoscaling).
