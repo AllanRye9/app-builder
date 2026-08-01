@@ -1,24 +1,21 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useRef, useState } from 'react';
 import Dropzone from './components/Dropzone.jsx';
 import JobTicket from './components/JobTicket.jsx';
 import ToastStack from './components/ToastStack.jsx';
-import ErrorBanner from './components/ErrorBanner.jsx';
-import { uploadAndStartBuild, fetchServerConfig } from './api.js';
+import { uploadZip } from './api.js';
 
 let nextTempId = 0;
 
 export default function App() {
+  // Each entry: { tempId, id, fileName, fileSize, status, error, queuePosition, downloadReady }
+  // tempId exists from the moment a file is picked (client-side, before the
+  // server has assigned a real job id) so the card can appear instantly
+  // while the upload is still in flight — the whole point of a
+  // multi-tasking dashboard is that starting build #2 never waits on #1.
   const [jobs, setJobs] = useState([]);
   const [notices, setNotices] = useState([]);
-  const [serverConfig, setServerConfig] = useState(null);
   const nextNoticeId = useRef(0);
   const notifyAsked = useRef(false);
-
-  useEffect(() => {
-    fetchServerConfig().then(setServerConfig);
-  }, []);
-
-  const configMessage = getConfigMessage(serverConfig);
 
   const pushToast = useCallback((payload) => {
     nextNoticeId.current += 1;
@@ -44,7 +41,8 @@ export default function App() {
       try {
         await Notification.requestPermission();
       } catch {
-        // In-app toast still covers completion either way.
+        // Some browsers/contexts (e.g. insecure origins) reject this — the
+        // in-app toast stack still covers completion either way.
       }
     }
   }
@@ -61,13 +59,13 @@ export default function App() {
           fileSize: file.size,
           status: 'uploading',
           error: null,
-          apkUrl: null,
-          runUrl: null,
+          queuePosition: null,
+          downloadReady: false,
         },
         ...prev,
       ]);
 
-      uploadAndStartBuild(file, { serverConfig })
+      uploadZip(file)
         .then((jobId) => patchJob(tempId, { id: jobId, status: 'validating' }))
         .catch((err) => {
           patchJob(tempId, { status: 'failed', error: err.message });
@@ -92,7 +90,7 @@ export default function App() {
       if (j.status === 'building') acc.building += 1;
       else if (j.status === 'success') acc.done += 1;
       else if (j.status === 'failed') acc.failed += 1;
-      else acc.queued += 1;
+      else acc.queued += 1; // uploading | validating | queued
       return acc;
     },
     { building: 0, queued: 0, done: 0, failed: 0 }
@@ -103,22 +101,21 @@ export default function App() {
       <ToastStack notices={notices} onDismiss={dismissToast} />
 
       <header className="floor-header">
-        <div className="eyebrow"><span className="dot" />apk-builder — one server + GitHub Actions</div>
+        <div className="eyebrow"><span className="dot" />apk-builder — build floor</div>
         <h1>Turn React projects into APKs, all at once</h1>
         <p className="sub">
-          Drop in as many project archives as you like. Each one builds on a fresh GitHub Actions
-          runner — no image to go stale, nothing to redeploy when a new one starts.
+          Drop in as many project archives as you like. Each one runs in its own isolated,
+          disposable container with a pre-configured Android SDK — nothing runs on your machine,
+          and nothing here waits in line behind anything else.
         </p>
       </header>
-
-      <ErrorBanner message={configMessage} />
 
       <Dropzone onFilesSelected={handleFilesSelected} />
 
       {jobs.length > 0 && (
         <div className="stats-bar" aria-label="Build floor summary">
           <Stat value={counts.building} label="building" tone="active" />
-          <Stat value={counts.queued} label="starting" tone="queued" />
+          <Stat value={counts.queued} label="waiting" tone="queued" />
           <Stat value={counts.done} label="done" tone="done" />
           {counts.failed > 0 && <Stat value={counts.failed} label="failed" tone="failed" />}
         </div>
@@ -144,6 +141,7 @@ export default function App() {
               job={job}
               onUpdate={(patch) => patchJob(job.tempId, patch)}
               onDone={(status, error) => handleJobDone(job.tempId, job.fileName, status, error)}
+              onNotice={pushToast}
               onRemove={() => removeJob(job.tempId)}
             />
           ))
@@ -151,7 +149,7 @@ export default function App() {
       </div>
 
       <footer className="app-footer">
-        Builds run on GitHub-hosted Ubuntu runners with a 20-minute timeout, torn down after each job.
+        Builds run with capped CPU/memory in ephemeral containers, destroyed after each job.
       </footer>
     </main>
   );
@@ -166,22 +164,9 @@ function Stat({ value, label, tone }) {
   );
 }
 
-function getConfigMessage(serverConfig) {
-  if (!serverConfig) return '';
-  const problems = [];
-  if (serverConfig.missingEnvVars?.length > 0) {
-    problems.push(`missing ${serverConfig.missingEnvVars.join(', ')} environment variable${serverConfig.missingEnvVars.length > 1 ? 's' : ''}`);
-  }
-  if (!serverConfig.storageAvailable) {
-    problems.push('no writable storage directory available');
-  }
-  if (serverConfig.usingTemporaryCallbackSecret) {
-    problems.push('CALLBACK_SECRET is auto-generated and temporary — a build in progress will get stuck if this server restarts before it finishes, set a real CALLBACK_SECRET to fix this');
-  }
-  if (problems.length === 0) return '';
-  return `Server setup isn't finished yet (${problems.join('; ')}) — see the README for the environment variables this needs.`;
-}
-
+// Best-effort OS-level notification for when the tab is backgrounded — the
+// in-app toast already covers the foreground case. Silently does nothing
+// anywhere this isn't supported or permitted; never blocks the build flow.
 function notifyBrowser(title, body) {
   if (!('Notification' in window) || Notification.permission !== 'granted') return;
   if (document.visibilityState === 'visible' && document.hasFocus()) return;

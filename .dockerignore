@@ -1,10 +1,10 @@
 node_modules
-npm-debug.log
+web/node_modules
+web/dist
 .git
 .gitignore
 *.md
-dist
-data
 .env
-.env.*
-!.env.example
+.env.local
+.jobs
+npm-debug.log

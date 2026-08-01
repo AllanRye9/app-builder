@@ -1,5 +1,9 @@
 import { useRef, useState } from 'react';
 
+// Persistent upload control — stays active at all times (never disabled
+// while other builds are running) and accepts multiple archives in one
+// drop/selection, since starting a new build no longer has to wait for an
+// existing one to finish.
 export default function Dropzone({ onFilesSelected }) {
   const inputRef = useRef(null);
   const [dragging, setDragging] = useState(false);

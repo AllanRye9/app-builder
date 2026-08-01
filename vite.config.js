@@ -1,10 +1,11 @@
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 
-// Local dev: run `npm start` in a second terminal (starts server/index.js,
-// the real Express server, on :3000) — /api requests from the Vite dev
-// server here are proxied straight to it. `npm run dev` alone is fine for
-// pure UI iteration without a working backend.
+// Local dev: run `vercel dev` (serves both /api/* functions and this Vite
+// app together on one port) — that's the only way to exercise the API
+// functions locally, since they're Vercel Serverless Functions, not an
+// Express app. Plain `npm run dev` still works for pure UI iteration, with
+// /api requests proxied to `vercel dev` running separately on :3000.
 export default defineConfig({
   plugins: [react()],
   server: {

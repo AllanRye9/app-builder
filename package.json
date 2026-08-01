@@ -1,24 +1,23 @@
 {
   "name": "apk-builder",
-  "private": true,
-  "version": "1.0.0",
-  "type": "module",
+  "version": "2.0.0",
+  "description": "Web service that turns an uploaded React/Capacitor project into a downloadable APK using an isolated Docker build.",
+  "main": "src/index.js",
+  "type": "commonjs",
   "scripts": {
-    "dev": "vite",
-    "build": "vite build",
-    "preview": "vite preview",
-    "start": "node server/index.js"
+    "start": "node src/index.js",
+    "dev": "node --watch src/index.js",
+    "build:web": "npm --prefix web install && npm --prefix web run build",
+    "dev:web": "npm --prefix web run dev"
   },
   "dependencies": {
-    "@vercel/blob": "^2.6.1",
-    "dotenv": "^16.6.1",
+    "adm-zip": "^0.5.16",
+    "cors": "^2.8.5",
     "express": "^4.21.2",
     "multer": "^2.0.1",
-    "react": "^18.3.1",
-    "react-dom": "^18.3.1"
+    "uuid": "^11.0.5"
   },
-  "devDependencies": {
-    "@vitejs/plugin-react": "4.3.4",
-    "vite": "5.4.21"
+  "engines": {
+    "node": ">=18"
   }
 }
