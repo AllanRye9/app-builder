@@ -1,30 +1,150 @@
+// Load a local .env file if one exists (harmless no-op in prod/hosted
+// environments where there is no .env file and env vars are injected by
+// the platform instead — Render, Vercel, Railway, Fly, Docker, etc. all
+// inject real process.env vars directly, so this only ever helps, never
+// overrides them).
+import 'dotenv/config';
 import express from 'express';
 import multer from 'multer';
-import { randomUUID } from 'crypto';
+import { randomUUID, randomBytes } from 'crypto';
 import { fileURLToPath } from 'url';
 import path from 'path';
+import os from 'os';
 import { promises as fs } from 'fs';
 import { initStatusStore, writeStatus, readStatus } from './statusStore.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
-const { GITHUB_TOKEN, GITHUB_OWNER, GITHUB_REPO, CALLBACK_SECRET, PORT } = process.env;
+// --- Env var helpers ------------------------------------------------------
+// Read (and lightly sanitize) an env var. Some dashboards let people paste
+// values with surrounding quotes or trailing whitespace/newlines — trim
+// those so a copy-paste mistake doesn't silently turn into "var is unset".
+function env(name) {
+  const v = process.env[name];
+  if (v == null) return undefined;
+  const trimmed = v.trim().replace(/^['"]|['"]$/g, '');
+  return trimmed === '' ? undefined : trimmed;
+}
+
+// CALLBACK_SECRET only has to be known by this server and the workflow run
+// it dispatches — it's handed to GitHub as part of the dispatch payload
+// (see client_payload.callback_secret below), so a value generated here at
+// boot works fine even if it was never set as a real env var. It just
+// won't survive a restart (any in-flight job's callback would then fail),
+// so setting a real CALLBACK_SECRET env var is still recommended for
+// anything beyond quick local testing.
+const runtimeCallbackSecret = env('CALLBACK_SECRET') ? null : randomBytes(32).toString('hex');
+if (!env('CALLBACK_SECRET')) {
+  console.warn(
+    '[apk-builder] CALLBACK_SECRET is not set — generated a temporary one for this run. ' +
+      'A build dispatched now will use this value, but if the server restarts or cold-starts ' +
+      'before that build finishes (idle spin-down, redeploy, a new serverless instance), the ' +
+      "value changes and the build's callbacks will get 403'd — the job will look stuck at " +
+      '"queued"/"building" forever even though it actually finished on GitHub\'s side. ' +
+      'Set a real CALLBACK_SECRET env var (e.g. `openssl rand -hex 32`) to avoid this.'
+  );
+}
+
+// Read fresh from process.env on every call (rather than destructuring
+// once at import time) so this keeps working even if env vars are
+// (re)injected after the module first loads — e.g. some serverless
+// cold-start paths, or env vars set via a platform API after the process
+// has already started.
+function getConfig() {
+  return {
+    GITHUB_TOKEN: env('GITHUB_TOKEN'),
+    GITHUB_OWNER: env('GITHUB_OWNER'),
+    GITHUB_REPO: env('GITHUB_REPO'),
+    CALLBACK_SECRET: env('CALLBACK_SECRET') || runtimeCallbackSecret,
+  };
+}
 
 // On Render, attach a persistent Disk and set DATA_DIR to its mount path
 // (e.g. /data) so uploaded zips, built APKs, and job status all survive
-// redeploys. Without a disk this still works — DATA_DIR just falls back to
-// local container storage, which is wiped on every deploy/restart.
-const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, '..', 'data');
-const UPLOADS_DIR = path.join(DATA_DIR, 'uploads');
-const APKS_DIR = path.join(DATA_DIR, 'apks');
+// redeploys. On platforms with a read-only filesystem (e.g. Vercel, where
+// only /tmp is writable, and even that doesn't persist between
+// invocations), fall back to the OS temp dir instead of crashing at boot.
+const DATA_DIR_CANDIDATES = [
+  env('DATA_DIR'),
+  path.join(__dirname, '..', 'data'),
+  path.join(os.tmpdir(), 'apk-builder-data'),
+].filter(Boolean);
+
+async function resolveDataDir() {
+  for (const candidate of DATA_DIR_CANDIDATES) {
+    try {
+      await fs.mkdir(candidate, { recursive: true });
+      // Confirm it's actually writable, not just creatable.
+      await fs.access(candidate, fs.constants.W_OK);
+      return candidate;
+    } catch (err) {
+      console.warn(`[apk-builder] DATA_DIR candidate "${candidate}" isn't usable (${err.code || err.message}), trying the next fallback.`);
+    }
+  }
+  throw new Error('No writable directory found for DATA_DIR (tried: ' + DATA_DIR_CANDIDATES.join(', ') + ')');
+}
+
 const DIST_DIR = path.join(__dirname, '..', 'dist');
 
 const app = express();
+// Render, Vercel, Railway, Fly, etc. all sit behind a reverse proxy —
+// without this, req.protocol reports 'http' even for real https requests
+// (Express only trusts X-Forwarded-Proto/X-Forwarded-Host when told to),
+// which corrupts the callbackBase/zipUrl URLs handed to the GitHub Actions
+// runner below and can cause its callbacks back to this server to silently
+// fail, leaving jobs stuck at "queued"/"building" forever.
+app.set('trust proxy', true);
 app.use(express.json());
+
+// These are filled in once resolveDataDir() finishes, kicked off just
+// below. Routes read them lazily (at request time, not at route-definition
+// time) so route registration doesn't have to wait on that async
+// resolution.
+let UPLOADS_DIR = null;
+let APKS_DIR = null;
+let dataDirError = null;
+
+// Storage is resolved once here and never blocks the server from booting:
+// if no writable directory can be found at all (rare — even the OS temp
+// dir failing usually means something is very wrong with the host), the
+// server still starts and serves the frontend + /api/config so the UI can
+// explain what's wrong, instead of crash-looping.
+async function initStorage() {
+  try {
+    const dataDir = await resolveDataDir();
+    await initStatusStore(dataDir);
+    UPLOADS_DIR = path.join(dataDir, 'uploads');
+    APKS_DIR = path.join(dataDir, 'apks');
+    await Promise.all([
+      fs.mkdir(UPLOADS_DIR, { recursive: true }),
+      fs.mkdir(APKS_DIR, { recursive: true }),
+    ]);
+    if (dataDir !== env('DATA_DIR') && dataDir.startsWith(os.tmpdir())) {
+      console.warn(
+        `[apk-builder] Using a temporary storage directory (${dataDir}) — uploads, APKs, and job ` +
+          'status will NOT persist across restarts/redeploys. Set DATA_DIR to a persistent, ' +
+          'writable path (e.g. a Render Disk mount) for production use.'
+      );
+    }
+  } catch (err) {
+    dataDirError = err.message;
+    console.error('[apk-builder] Could not set up a storage directory — uploads will fail until this is fixed:', err.message);
+  }
+}
+
+const storageReady = initStorage();
+
+// Make sure storage init has finished (or failed cleanly, leaving
+// dataDirError set) before any route handler runs. Cheap no-op on every
+// request after the first, since the promise is already settled by then.
+app.use((req, res, next) => {
+  storageReady.then(() => next()).catch(next);
+});
 
 const upload = multer({
   storage: multer.diskStorage({
     destination: (req, file, cb) => {
+      if (!UPLOADS_DIR) return cb(new Error('Storage directory is not available yet.'));
       const jobId = req.jobId || (req.jobId = randomUUID());
       const dir = path.join(UPLOADS_DIR, jobId);
       fs.mkdir(dir, { recursive: true }).then(() => cb(null, dir)).catch(cb);
@@ -41,6 +161,7 @@ const upload = multer({
 });
 
 function requireCallbackSecret(req, res, next) {
+  const { CALLBACK_SECRET } = getConfig();
   const secret = req.body?.secret;
   if (!CALLBACK_SECRET || secret !== CALLBACK_SECRET) {
     return res.status(403).json({ error: 'Invalid callback secret.' });
@@ -48,15 +169,42 @@ function requireCallbackSecret(req, res, next) {
   next();
 }
 
+// --- Report which required env vars are missing, for the frontend to show
+// a clear banner instead of people only finding out on their first upload.
+app.get('/api/config', (req, res) => {
+  const { GITHUB_TOKEN, GITHUB_OWNER, GITHUB_REPO, CALLBACK_SECRET } = getConfig();
+  const missing = [];
+  if (!GITHUB_TOKEN) missing.push('GITHUB_TOKEN');
+  if (!GITHUB_OWNER) missing.push('GITHUB_OWNER');
+  if (!GITHUB_REPO) missing.push('GITHUB_REPO');
+  if (!CALLBACK_SECRET) missing.push('CALLBACK_SECRET');
+  res.status(200).json({
+    ready: missing.length === 0 && !dataDirError,
+    missingEnvVars: missing,
+    storageAvailable: Boolean(UPLOADS_DIR && APKS_DIR),
+    storageError: dataDirError,
+    // True when CALLBACK_SECRET was never actually set and this server is
+    // relying on the auto-generated fallback — builds still work, but if
+    // this process restarts/cold-starts mid-build, the secret changes and
+    // that build's callbacks will 403, leaving it stuck at
+    // "queued"/"building" forever. Set a real CALLBACK_SECRET to avoid it.
+    usingTemporaryCallbackSecret: !env('CALLBACK_SECRET'),
+  });
+});
+
 // --- Upload the project zip and kick off the GitHub Actions build ---------
 app.post('/api/upload-and-start', (req, res) => {
   upload.single('file')(req, res, async (err) => {
     if (err) return res.status(400).json({ error: err.message });
     if (!req.file) return res.status(400).json({ error: 'A .zip file is required.' });
 
-    if (!GITHUB_TOKEN || !GITHUB_OWNER || !GITHUB_REPO || !CALLBACK_SECRET) {
+    const { GITHUB_TOKEN, GITHUB_OWNER, GITHUB_REPO, CALLBACK_SECRET } = getConfig();
+    const missing = ['GITHUB_TOKEN', 'GITHUB_OWNER', 'GITHUB_REPO', 'CALLBACK_SECRET'].filter(
+      (name) => !getConfig()[name]
+    );
+    if (missing.length > 0) {
       return res.status(500).json({
-        error: 'Server is missing GITHUB_TOKEN, GITHUB_OWNER, GITHUB_REPO, or CALLBACK_SECRET — set these in the Render service\'s Environment settings (see README).',
+        error: `Server is missing ${missing.join(', ')} — set ${missing.length > 1 ? 'these' : 'it'} in your hosting platform's Environment/Variables settings (see README).`,
       });
     }
 
@@ -143,6 +291,7 @@ app.post('/api/build-complete', requireCallbackSecret, async (req, res) => {
 const apkUpload = multer({
   storage: multer.diskStorage({
     destination: (req, file, cb) => {
+      if (!APKS_DIR) return cb(new Error('Storage directory is not available yet.'));
       const dir = path.join(APKS_DIR, req.body.jobId || 'unknown');
       fs.mkdir(dir, { recursive: true }).then(() => cb(null, dir)).catch(cb);
     },
@@ -154,6 +303,7 @@ const apkUpload = multer({
 app.post('/api/upload-apk', (req, res) => {
   apkUpload.single('apk')(req, res, async (err) => {
     if (err) return res.status(400).json({ error: err.message });
+    const { CALLBACK_SECRET } = getConfig();
     if (req.body.secret !== CALLBACK_SECRET) {
       return res.status(403).json({ error: 'Invalid callback secret.' });
     }
@@ -166,9 +316,25 @@ app.post('/api/upload-apk', (req, res) => {
   });
 });
 
-// --- Static files -------------------------------------------------------
-app.use('/uploads', express.static(UPLOADS_DIR));
-app.use('/apks', express.static(APKS_DIR));
+// --- Static files ---------------------------------------------------------
+// UPLOADS_DIR/APKS_DIR aren't known until resolveDataDir() finishes (below),
+// so these wrap express.static in a small dispatcher that looks the
+// directory up at request time instead of route-registration time.
+function staticFrom(getDir) {
+  const middlewareCache = new Map();
+  return (req, res, next) => {
+    const dir = getDir();
+    if (!dir) return res.status(503).json({ error: 'Storage is not available on this deployment yet.' });
+    let mw = middlewareCache.get(dir);
+    if (!mw) {
+      mw = express.static(dir);
+      middlewareCache.set(dir, mw);
+    }
+    mw(req, res, next);
+  };
+}
+app.use('/uploads', staticFrom(() => UPLOADS_DIR));
+app.use('/apks', staticFrom(() => APKS_DIR));
 app.use(express.static(DIST_DIR));
 app.get('*', (req, res, next) => {
   if (req.path.startsWith('/api') || req.path.startsWith('/uploads') || req.path.startsWith('/apks')) {
@@ -177,18 +343,24 @@ app.get('*', (req, res, next) => {
   res.sendFile(path.join(DIST_DIR, 'index.html'));
 });
 
-const port = PORT || 3000;
-initStatusStore(DATA_DIR)
-  .then(() => Promise.all([
-    fs.mkdir(UPLOADS_DIR, { recursive: true }),
-    fs.mkdir(APKS_DIR, { recursive: true }),
-  ]))
-  .then(() => {
+// --- Startup ---------------------------------------------------------------
+// Vercel (and similar) import this module and call the exported app
+// directly per-request — it must not call app.listen() itself there.
+// Everywhere else (Render, Railway, Fly, plain Docker, local `npm start`)
+// this is a normal long-running process, so it does.
+const isServerless = Boolean(env('VERCEL') || env('AWS_LAMBDA_FUNCTION_NAME'));
+
+if (!isServerless) {
+  const port = Number(env('PORT')) || 3000;
+  storageReady.then(() => {
     app.listen(port, () => {
       console.log(`apk-builder server listening on :${port}`);
     });
-  })
-  .catch((err) => {
-    console.error('Failed to start server:', err);
-    process.exit(1);
   });
+}
+// On serverless platforms, the `storageReady` gate middleware registered
+// right after express.json() above already makes sure storage init has
+// finished (or failed cleanly) before any route handler runs — no
+// app.listen() needed there; the platform calls the exported app per-request.
+
+export default app;

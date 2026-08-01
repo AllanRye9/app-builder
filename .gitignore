@@ -1,10 +1,8 @@
 node_modules
-npm-debug.log
-.git
-.gitignore
-*.md
 dist
 data
 .env
 .env.*
 !.env.example
+npm-debug.log
+.DS_Store
