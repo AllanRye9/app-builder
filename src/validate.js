@@ -6,9 +6,14 @@ const AdmZip = require('adm-zip');
 
 class ValidationError extends Error {}
 
-const FORBIDDEN_TOP_LEVEL = new Set([
-  'android', 'ios', 'platforms', 'capacitor.config.json', 'capacitor.config.ts',
-]);
+// android/, ios/, and platforms/ are genuinely generated output — an
+// existing one would collide with what the build creates and can't be
+// safely merged, so those still hard-reject. A capacitor.config.json/.ts by
+// itself is different: plenty of real Capacitor-ready projects ship one
+// deliberately (it's how you turn a plain web app into one), and it
+// doesn't conflict with anything — buildRunner.js detects it and reuses it
+// instead of overwriting it via `cap init`, rather than rejecting it here.
+const FORBIDDEN_TOP_LEVEL = new Set(['android', 'ios', 'platforms']);
 
 // Only these file types are trusted to build the web app itself. Anything
 // else in the archive (native-platform config like proguard-rules.pro,

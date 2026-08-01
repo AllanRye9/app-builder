@@ -175,7 +175,26 @@ async function runBuild(job) {
       `@capacitor/cli@${CAPACITOR_MAJOR}`,
       `@capacitor/android@${CAPACITOR_MAJOR}`,
     ]);
-    await run('npx', ['cap', 'init', APP_NAME, APP_ID, `--web-dir=${webDir}`]);
+
+    const hasExistingConfig =
+      fs.existsSync(path.join(projectDir, 'capacitor.config.json')) ||
+      fs.existsSync(path.join(projectDir, 'capacitor.config.ts'));
+
+    if (hasExistingConfig) {
+      // `cap init` either refuses to run or overwrites an existing config —
+      // neither is what we want here. A project that already ships its own
+      // capacitor.config is telling us its actual appId/appName/webDir;
+      // trust that instead of layering our own defaults on top of it.
+      log(job, 'Found an existing capacitor.config — using it as-is instead of running cap init.');
+      notice(job, {
+        level: 'info',
+        title: 'Using existing Capacitor config',
+        message: "This project already had a capacitor.config file, so it was used as-is instead of generating a new one.",
+      });
+    } else {
+      await run('npx', ['cap', 'init', APP_NAME, APP_ID, `--web-dir=${webDir}`]);
+    }
+
     await run('npx', ['cap', 'add', 'android']);
     await run('npx', ['cap', 'copy', 'android']);
 
