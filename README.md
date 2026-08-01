@@ -106,24 +106,46 @@ platform just has a different place to set them.
   redeploy with them present (they're in this download).
 
   A few other things to know before relying on Vercel specifically:
-  - **You must redeploy after adding/changing environment variables.** Setting `GITHUB_TOKEN` etc.
-    in the dashboard does not update an already-built deployment — Vercel bakes env vars in at
-    build/deploy time. If uploads still fail with "Failed to dispatch build workflow" right after
-    setting them, this is the most common cause: go to Deployments → trigger a new one (or push
-    any commit) after saving the variables, then check `/api/config` on the *new* deployment URL to
-    confirm it shows `"ready": true`.
+  - **Attach a Vercel Blob store, or the zip upload will fail.** Vercel Functions cap request
+    bodies at 4.5MB — hard limit, can't be raised — so a plain multipart upload of a real project
+    zip never reaches this server's code at all. To get around that, this app automatically
+    switches to uploading the zip **directly from the browser to Vercel Blob** (bypassing the
+    Function entirely) whenever it detects `BLOB_READ_WRITE_TOKEN` in the environment; `/api/config`
+    reports which mode is active as `storageMode: "blob"` or `"disk"`. To turn blob mode on:
+    1. Vercel dashboard → your project → **Storage** tab → create a Blob store (or attach an
+       existing one).
+    2. Connecting a store to your project auto-adds `BLOB_READ_WRITE_TOKEN` as an environment
+       variable — confirm it's there under Settings → Environment Variables.
+    3. **Redeploy** (see the env var note above — this applies here too).
+    4. Check `/api/config` on the new deployment: `storageMode` should say `"blob"`.
+
+    If you see `Upload failed: Vercel Blob: Failed to retrieve the client token`, that error is
+    coming from the browser-side upload call itself and almost always means the store isn't
+    attached yet or the token hasn't propagated to a fresh deployment — steps 1–4 above are the fix.
+  - **The built APK still relays through this server on its way back from GitHub Actions**
+    (`/api/upload-apk`), which means it's still subject to that same 4.5MB Function body cap — a
+    debug APK bigger than that will fail at the *end* of the build even once the zip upload itself
+    works. Most minimal debug APKs are small enough that this doesn't come up, but if you hit it,
+    the fix is the same idea as the zip: have `.github/workflows/build-apk.yml` upload the APK
+    directly to Blob (using `@vercel/blob`'s `put()`, authenticated with `BLOB_READ_WRITE_TOKEN`
+    passed into the workflow) instead of POSTing it to `/api/upload-apk`. That workflow file isn't
+    part of this repo/app, so it isn't included here — ask if you want the exact snippet for it.
+  - **You must redeploy after adding/changing environment variables.** Setting `GITHUB_TOKEN`,
+    `BLOB_READ_WRITE_TOKEN`, etc. in the dashboard does not update an already-built deployment —
+    Vercel bakes env vars in at build/deploy time. If uploads still fail with "Failed to dispatch
+    build workflow" right after setting them, this is the most common cause: go to Deployments →
+    trigger a new one (or push any commit) after saving the variables, then check `/api/config` on
+    the *new* deployment URL to confirm it shows `"ready": true`.
   - Environment variables in Vercel are scoped per environment (Production / Preview /
     Development). Make sure you added them to whichever environment you're actually testing —
     a var set only under "Production" won't be visible to a Preview deployment's URL, and vice versa.
-  - Vercel Functions only have a writable `/tmp`, and it's **not guaranteed to persist between
-    invocations** — `DATA_DIR` automatically falls back to a temp directory here, but uploaded
-    zips, job status, and finished APKs can disappear between requests on a cold start. Fine for
-    kicking the tyres; not fine for real use without wiring in external storage (S3, Vercel Blob,
-    a database) in place of the local-disk approach this app uses.
-  - Vercel's default request body size limit is smaller than the 200MB this app allows for project
-    zips on a real always-on server.
+  - Without a Blob store attached (`storageMode: "disk"`), Vercel Functions only have a writable
+    `/tmp`, and it's **not guaranteed to persist between invocations** — `DATA_DIR` automatically
+    falls back to a temp directory here, but uploaded zips, job status, and finished APKs can
+    disappear between requests on a cold start. Fine for kicking the tyres in disk mode; attach a
+    Blob store (above) for anything real.
   - For anything beyond quick testing, Render/Railway/Fly (a real persistent process + disk) is a
-    better fit for how this app is built.
+    better fit for how this app is built — Blob mode makes Vercel workable, not equivalent.
 
   **If uploads still fail with "Failed to dispatch build workflow" after confirming `/api/config`
   shows `"ready": true` on the current deployment:** that message is a generic fallback — the real

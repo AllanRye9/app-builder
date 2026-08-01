@@ -67,7 +67,7 @@ export default function App() {
         ...prev,
       ]);
 
-      uploadAndStartBuild(file)
+      uploadAndStartBuild(file, { serverConfig })
         .then((jobId) => patchJob(tempId, { id: jobId, status: 'validating' }))
         .catch((err) => {
           patchJob(tempId, { status: 'failed', error: err.message });

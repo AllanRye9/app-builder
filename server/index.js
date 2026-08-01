@@ -11,6 +11,7 @@ import { fileURLToPath } from 'url';
 import path from 'path';
 import os from 'os';
 import { promises as fs } from 'fs';
+import { handleUpload } from '@vercel/blob/client';
 import { initStatusStore, writeStatus, readStatus } from './statusStore.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -57,6 +58,19 @@ function getConfig() {
     GITHUB_REPO: env('GITHUB_REPO'),
     CALLBACK_SECRET: env('CALLBACK_SECRET') || runtimeCallbackSecret,
   };
+}
+
+// Whether to accept the project zip via a direct browser → Vercel Blob
+// upload instead of a plain multipart POST to this server. Needed on
+// Vercel specifically: Functions cap request bodies at 4.5MB, far below
+// the size of most real project zips, and there is no way to raise that
+// limit — the only fix is to have the browser upload straight to Blob
+// storage and hand this server just the resulting URL. On platforms
+// without that cap (Render, Railway, Fly, plain Docker), the original
+// multipart-to-disk path works fine and needs no Blob store at all — this
+// only turns on if BLOB_READ_WRITE_TOKEN is actually present.
+function isBlobEnabled() {
+  return Boolean(env('BLOB_READ_WRITE_TOKEN'));
 }
 
 // On Render, attach a persistent Disk and set DATA_DIR to its mount path
@@ -178,11 +192,17 @@ app.get('/api/config', (req, res) => {
   if (!GITHUB_OWNER) missing.push('GITHUB_OWNER');
   if (!GITHUB_REPO) missing.push('GITHUB_REPO');
   if (!CALLBACK_SECRET) missing.push('CALLBACK_SECRET');
+  const blobEnabled = isBlobEnabled();
   res.status(200).json({
     ready: missing.length === 0 && !dataDirError,
     missingEnvVars: missing,
-    storageAvailable: Boolean(UPLOADS_DIR && APKS_DIR),
-    storageError: dataDirError,
+    // 'blob' mode uploads the zip straight from the browser to Vercel Blob
+    // (see isBlobEnabled() above); 'disk' mode posts it to this server's
+    // own /uploads directory. The frontend uses this to pick which upload
+    // path to take — see src/api.js.
+    storageMode: blobEnabled ? 'blob' : 'disk',
+    storageAvailable: blobEnabled ? true : Boolean(UPLOADS_DIR && APKS_DIR),
+    storageError: blobEnabled ? null : dataDirError,
     // True when CALLBACK_SECRET was never actually set and this server is
     // relying on the auto-generated fallback — builds still work, but if
     // this process restarts/cold-starts mid-build, the secret changes and
@@ -190,6 +210,122 @@ app.get('/api/config', (req, res) => {
     // "queued"/"building" forever. Set a real CALLBACK_SECRET to avoid it.
     usingTemporaryCallbackSecret: !env('CALLBACK_SECRET'),
   });
+});
+
+// --- Blob mode: issue a short-lived, scoped token so the browser can
+// upload the zip directly to Vercel Blob, bypassing this Function's 4.5MB
+// body limit entirely. Only the token is generated here — the file bytes
+// never pass through this server. See src/api.js's uploadAndStartBuild for
+// the client side of this exchange.
+app.post('/api/blob-upload-token', async (req, res) => {
+  if (!isBlobEnabled()) {
+    return res.status(503).json({
+      error: 'Blob storage is not configured on this deployment (BLOB_READ_WRITE_TOKEN is unset).',
+    });
+  }
+  try {
+    // handleUpload expects a WHATWG Request (it reads request.headers via
+    // the Headers API) — Express's req is a plain Node IncomingMessage, so
+    // wrap it in a real Request rather than passing req directly.
+    const request = new Request(`${req.protocol}://${req.get('host')}${req.originalUrl}`, {
+      method: 'POST',
+      headers: req.headers,
+      body: JSON.stringify(req.body),
+    });
+    const jsonResponse = await handleUpload({
+      body: req.body,
+      request,
+      onBeforeGenerateToken: async (pathname) => {
+        if (!pathname.toLowerCase().endsWith('.zip')) {
+          throw new Error('Only .zip archives are accepted.');
+        }
+        return {
+          allowedContentTypes: ['application/zip', 'application/x-zip-compressed', 'application/octet-stream'],
+          addRandomSuffix: true,
+          maximumSizeInBytes: 200 * 1024 * 1024,
+          // v2+ of the SDK needs this spelled out explicitly for any
+          // deployment that isn't using Vercel's own System Environment
+          // Variables to infer it (e.g. BLOB_READ_WRITE_TOKEN set by hand
+          // rather than via an attached store) — without it,
+          // onUploadCompleted below silently never fires.
+          callbackUrl: `${req.protocol}://${req.get('host')}/api/blob-upload-token`,
+        };
+      },
+      onUploadCompleted: async ({ blob }) => {
+        console.log('[apk-builder] Blob upload completed:', blob.url);
+      },
+    });
+    res.status(200).json(jsonResponse);
+  } catch (err) {
+    console.error('[apk-builder] /api/blob-upload-token failed:', err);
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// --- Blob mode: the browser already uploaded the zip straight to Blob
+// storage (via the token above) — this just records the job and dispatches
+// the GitHub Actions build, same as /api/upload-and-start below but
+// without ever handling the file itself.
+app.post('/api/start-build', async (req, res) => {
+  const { blobUrl, filename } = req.body || {};
+  if (!blobUrl || !filename) {
+    return res.status(400).json({ error: 'blobUrl and filename are required.' });
+  }
+  let parsedUrl;
+  try {
+    parsedUrl = new URL(blobUrl);
+  } catch {
+    return res.status(400).json({ error: 'blobUrl is not a valid URL.' });
+  }
+  if (!parsedUrl.hostname.endsWith('.public.blob.vercel-storage.com')) {
+    return res.status(400).json({ error: 'blobUrl must be a Vercel Blob public storage URL.' });
+  }
+
+  const { GITHUB_TOKEN, GITHUB_OWNER, GITHUB_REPO, CALLBACK_SECRET } = getConfig();
+  const missing = ['GITHUB_TOKEN', 'GITHUB_OWNER', 'GITHUB_REPO', 'CALLBACK_SECRET'].filter(
+    (name) => !getConfig()[name]
+  );
+  if (missing.length > 0) {
+    return res.status(500).json({
+      error: `Server is missing ${missing.join(', ')} — set ${missing.length > 1 ? 'these' : 'it'} in your hosting platform's Environment/Variables settings (see README).`,
+    });
+  }
+
+  const jobId = randomUUID();
+  const callbackBase = `${req.protocol}://${req.get('host')}`;
+
+  await writeStatus(jobId, { status: 'queued', filename, error: null, apkUrl: null, runUrl: null });
+
+  const dispatchRes = await fetch(
+    `https://api.github.com/repos/${GITHUB_OWNER}/${GITHUB_REPO}/dispatches`,
+    {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${GITHUB_TOKEN}`,
+        Accept: 'application/vnd.github+json',
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        event_type: 'build-apk',
+        client_payload: {
+          job_id: jobId,
+          zip_url: blobUrl,
+          filename,
+          callback_base: callbackBase,
+          callback_secret: CALLBACK_SECRET,
+        },
+      }),
+    }
+  );
+
+  if (!dispatchRes.ok) {
+    const detail = await dispatchRes.text().catch(() => '');
+    const message = `Could not start the GitHub Actions build (HTTP ${dispatchRes.status}). Check GITHUB_TOKEN's permissions and that the workflow file is on the repo's default branch. ${detail}`;
+    await writeStatus(jobId, { status: 'failed', error: message });
+    return res.status(502).json({ error: 'Failed to dispatch build workflow.', jobId, detail: message });
+  }
+
+  res.status(202).json({ jobId });
 });
 
 // --- Upload the project zip and kick off the GitHub Actions build ---------
@@ -239,11 +375,9 @@ app.post('/api/upload-and-start', (req, res) => {
 
     if (!dispatchRes.ok) {
       const detail = await dispatchRes.text().catch(() => '');
-      await writeStatus(jobId, {
-        status: 'failed',
-        error: `Could not start the GitHub Actions build (HTTP ${dispatchRes.status}). Check GITHUB_TOKEN's permissions and that the workflow file is on the repo's default branch. ${detail}`,
-      });
-      return res.status(502).json({ error: 'Failed to dispatch build workflow.', jobId });
+      const message = `Could not start the GitHub Actions build (HTTP ${dispatchRes.status}). Check GITHUB_TOKEN's permissions and that the workflow file is on the repo's default branch. ${detail}`;
+      await writeStatus(jobId, { status: 'failed', error: message });
+      return res.status(502).json({ error: 'Failed to dispatch build workflow.', jobId, detail: message });
     }
 
     res.status(202).json({ jobId });

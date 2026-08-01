@@ -16,7 +16,9 @@ export async function fetchServerConfig() {
 // Uploads the project zip directly to this app's own server (a real,
 // long-running process — not a stateless Function with a 4.5MB body cap),
 // which saves it, kicks off the GitHub Actions build, and returns a job id.
-export async function uploadAndStartBuild(file) {
+// Used when /api/config reports storageMode: 'disk' (Render/Railway/Fly/
+// plain Docker, or Vercel without a Blob store attached).
+async function uploadAndStartBuildViaDisk(file) {
   const formData = new FormData();
   formData.append('file', file);
 
@@ -34,9 +36,65 @@ export async function uploadAndStartBuild(file) {
   }
 
   if (!res.ok) {
-    throw new Error(data.error || `Couldn't start the build (HTTP ${res.status}).`);
+    throw new Error(data.detail || data.error || `Couldn't start the build (HTTP ${res.status}).`);
   }
   return data.jobId;
+}
+
+// Uploads the project zip straight from the browser to Vercel Blob storage
+// — the file never passes through this app's server/Function at all, which
+// is what makes this work on Vercel despite its 4.5MB request body cap.
+// Used when /api/config reports storageMode: 'blob'.
+async function uploadAndStartBuildViaBlob(file, onProgress) {
+  // Imported dynamically so this (and its dependency chain) is only
+  // pulled into the bundle for people actually on a Blob-mode deployment.
+  const { upload } = await import('@vercel/blob/client');
+
+  let blob;
+  try {
+    blob = await upload(file.name, file, {
+      access: 'public',
+      handleUploadUrl: '/api/blob-upload-token',
+      onUploadProgress: onProgress
+        ? (event) => onProgress(event.percentage)
+        : undefined,
+    });
+  } catch (err) {
+    throw new Error(
+      `Upload failed: ${err.message || err} — if this mentions a missing/unattached Blob store, ` +
+        "check the Storage tab, confirm BLOB_READ_WRITE_TOKEN is set in Environment Variables, " +
+        'and redeploy after adding it (env vars only apply to deployments made after they were set).'
+    );
+  }
+
+  const res = await fetch('/api/start-build', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ blobUrl: blob.url, filename: file.name }),
+  });
+
+  const bodyText = await res.text();
+  let data = {};
+  try {
+    data = bodyText ? JSON.parse(bodyText) : {};
+  } catch {
+    throw new Error(`Couldn't start the build: server returned HTTP ${res.status} (not JSON).`);
+  }
+
+  if (!res.ok) {
+    throw new Error(data.detail || data.error || `Couldn't start the build (HTTP ${res.status}).`);
+  }
+  return data.jobId;
+}
+
+// Picks the right upload path based on what the server reports it's set up
+// for (see /api/config's storageMode) — callers don't need to know which
+// one is in play.
+export async function uploadAndStartBuild(file, { serverConfig, onProgress } = {}) {
+  if (serverConfig?.storageMode === 'blob') {
+    return uploadAndStartBuildViaBlob(file, onProgress);
+  }
+  return uploadAndStartBuildViaDisk(file);
 }
 
 // No long-lived connection to hold open here — GitHub Actions runs happen
