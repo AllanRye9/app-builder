@@ -20,7 +20,35 @@ const JOB_ROOT = process.env.JOB_ROOT || path.join(os.tmpdir(), 'apk-builder-job
 // disk, not correctness, since both npm and Gradle key their caches by
 // package name+version+hash already.
 const NPM_CACHE_DIR = process.env.NPM_CACHE_DIR || path.join(os.tmpdir(), 'apk-builder-cache', 'npm');
-const GRADLE_USER_HOME = process.env.GRADLE_USER_HOME_DIR || path.join(os.tmpdir(), 'apk-builder-cache', 'gradle');
+
+// NOTE: this is intentionally NOT used as GRADLE_USER_HOME anymore. Gradle
+// keeps its daemon registry (daemon/<version>/registry.bin + the port files
+// daemons advertise themselves on) *inside* GRADLE_USER_HOME. Pointing every
+// concurrent build at the same GRADLE_USER_HOME means their single-use
+// daemons share that registry — one build's client can end up handed the
+// address of a DIFFERENT build's daemon, whose handshake it can't parse.
+// That's the "Unexpected type tag N found" / endless "Unable to receive
+// command from client socket connection ... Discarding connection" loop:
+// not a build failure, a protocol collision, and it never resolves on its
+// own — it loops until BUILD_TIMEOUT_MS kills the job.
+//
+// Fix: split the two concerns Gradle bundles into GRADLE_USER_HOME.
+//  - GRADLE_RO_DEP_CACHE (this dir): shared, persistent, read-only reuse of
+//    downloaded module/artifact caches + wrapper distributions across every
+//    job — this is where the real time savings live, and it's safe to
+//    share because Gradle only reads it here (see runGradle in
+//    buildRunner.js).
+//  - GRADLE_USER_HOME: set per-job in buildRunner.js instead (under that
+//    job's own JOB_ROOT/<id> dir), so each build's daemon registry is
+//    isolated and gets wiped by the same TTL sweep as the rest of the job.
+const GRADLE_RO_DEP_CACHE = process.env.GRADLE_RO_DEP_CACHE || path.join(os.tmpdir(), 'apk-builder-cache', 'gradle-ro-cache');
+
+// Gradle's *local build cache* (what --build-cache actually populates) is a
+// separate thing from the dependency cache above, but shares the same
+// "safe to share across concurrent jobs" property — see
+// src/shared-build-cache-init.gradle for why it needs its own init script
+// to get redirected here instead of following GRADLE_USER_HOME.
+const GRADLE_SHARED_BUILD_CACHE_DIR = process.env.GRADLE_SHARED_BUILD_CACHE_DIR || path.join(os.tmpdir(), 'apk-builder-cache', 'gradle-build-cache');
 
 module.exports = {
   // Most platforms inject PORT themselves — the app must listen on
@@ -49,5 +77,6 @@ module.exports = {
   RATE_LIMIT_WINDOW_MS: parseInt(process.env.RATE_LIMIT_WINDOW_MS || `${10 * 60 * 1000}`, 10),
 
   NPM_CACHE_DIR,
-  GRADLE_USER_HOME,
+  GRADLE_RO_DEP_CACHE,
+  GRADLE_SHARED_BUILD_CACHE_DIR,
 };

@@ -4,7 +4,15 @@ const { spawn } = require('child_process');
 const fs = require('fs');
 const path = require('path');
 const { log, notice, setStatus, setQueuePosition } = require('./jobStore');
-const { MAX_CONCURRENT_BUILDS, BUILD_TIMEOUT_MS, NPM_CACHE_DIR, GRADLE_USER_HOME } = require('./config');
+const {
+  MAX_CONCURRENT_BUILDS,
+  BUILD_TIMEOUT_MS,
+  NPM_CACHE_DIR,
+  GRADLE_RO_DEP_CACHE,
+  GRADLE_SHARED_BUILD_CACHE_DIR,
+} = require('./config');
+
+const SHARED_BUILD_CACHE_INIT_SCRIPT = path.join(__dirname, 'shared-build-cache-init.gradle');
 
 const APP_ID = process.env.APP_ID || 'com.builder.app';
 const APP_NAME = process.env.APP_NAME || 'MyApp';
@@ -13,7 +21,8 @@ const CAPACITOR_MAJOR = process.env.CAPACITOR_MAJOR || '7';
 // Created once at startup, shared by every job for the life of this
 // container — see config.js for why these live outside JOB_ROOT.
 fs.mkdirSync(NPM_CACHE_DIR, { recursive: true });
-fs.mkdirSync(GRADLE_USER_HOME, { recursive: true });
+fs.mkdirSync(GRADLE_RO_DEP_CACHE, { recursive: true });
+fs.mkdirSync(GRADLE_SHARED_BUILD_CACHE_DIR, { recursive: true });
 
 const queue = [];
 let running = 0;
@@ -169,13 +178,32 @@ async function runBuild(job) {
       const childEnv = { ...process.env, ...(opts.env || {}) };
       delete childEnv.NODE_ENV;
 
-      // Shared, persistent caches (see config.js) — set unconditionally.
-      // Harmless for commands that don't read them, and means npm/Gradle
-      // never re-fetch a dependency this container has already downloaded
-      // for a previous job, which is where most of a build's wall-clock
-      // time otherwise goes.
+      // Shared, persistent npm cache (see config.js) — set unconditionally.
+      // Harmless for commands that don't read it, and means npm never
+      // re-fetches a dependency this container has already downloaded for
+      // a previous job, which is where most of a build's wall-clock time
+      // otherwise goes.
       childEnv.NPM_CONFIG_CACHE = NPM_CACHE_DIR;
-      childEnv.GRADLE_USER_HOME = GRADLE_USER_HOME;
+
+      // Gradle's cache and its daemon registry are DIFFERENT things, and
+      // must NOT share a directory across concurrent jobs — see the long
+      // comment on GRADLE_RO_DEP_CACHE in config.js for why sharing
+      // GRADLE_USER_HOME across concurrent builds produces an endless
+      // "Unexpected type tag N found" / "Discarding connection" loop
+      // instead of a real error.
+      //
+      // GRADLE_USER_HOME here is per-job (under this job's own JOB_ROOT/<id>
+      // dir, wiped by the same TTL sweep as the rest of the job) so each
+      // build's daemon registry is isolated. GRADLE_RO_DEP_CACHE is shared
+      // and read-only, so downloaded module/artifact caches + wrapper
+      // distributions still get reused across jobs — that's the actual
+      // time-saving, and Gradle only ever reads from it, so concurrent
+      // builds can't corrupt each other through it.
+      const jobGradleHome = path.join(job.dir, 'gradle-home');
+      fs.mkdirSync(jobGradleHome, { recursive: true });
+      childEnv.GRADLE_USER_HOME = jobGradleHome;
+      childEnv.GRADLE_RO_DEP_CACHE = GRADLE_RO_DEP_CACHE;
+      childEnv.GRADLE_SHARED_BUILD_CACHE_DIR = GRADLE_SHARED_BUILD_CACHE_DIR;
 
       const child = spawn(command, args, {
         cwd: opts.cwd || projectDir,
@@ -230,8 +258,14 @@ async function runBuild(job) {
   //  --no-daemon    required for the timeout-kill logic above to be able to
   //                 reap every JVM process Gradle forks, not just leave a
   //                 daemon running past its own job's lifetime.
-  //  --build-cache  reuses GRADLE_USER_HOME's shared build cache across
-  //                 jobs instead of recompiling unchanged tasks every time.
+  //  --build-cache  reuses task outputs across jobs instead of recompiling
+  //                 unchanged ones every time. The local build cache
+  //                 directory itself would default to under GRADLE_USER_HOME
+  //                 — which is per-job now (see the GRADLE_USER_HOME
+  //                 assignment above) — so --init-script redirects it back
+  //                 to a shared directory. See
+  //                 src/shared-build-cache-init.gradle for why that's safe
+  //                 to share even though the daemon registry isn't.
   // Deliberately NOT adding --parallel: MAX_CONCURRENT_BUILDS is already
   // sized against this container's total RAM (see config.js) assuming each
   // build is single-threaded on the Gradle side; letting Gradle itself
@@ -239,7 +273,11 @@ async function runBuild(job) {
   // conservative default concurrency was chosen to avoid.
   function runGradle(gradlewPath, androidDir) {
     fs.chmodSync(gradlewPath, 0o755);
-    return run(gradlewPath, ['assembleDebug', '--no-daemon', '--build-cache'], { cwd: androidDir });
+    return run(
+      gradlewPath,
+      ['assembleDebug', '--no-daemon', '--build-cache', '--init-script', SHARED_BUILD_CACHE_INIT_SCRIPT],
+      { cwd: androidDir }
+    );
   }
 
   try {

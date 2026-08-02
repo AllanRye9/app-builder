@@ -1,0 +1,27 @@
+// Passed to every build via `gradlew --init-script ... --build-cache`
+// (see runGradle() in src/buildRunner.js).
+//
+// Why this exists: GRADLE_USER_HOME is set per-job (see the comment in
+// config.js on GRADLE_RO_DEP_CACHE) so concurrent builds' daemon registries
+// don't collide. But --build-cache's *local build cache* directory defaults
+// to $GRADLE_USER_HOME/caches/build-cache-1, so without this it would
+// silently stop being shared across jobs the moment GRADLE_USER_HOME
+// stopped being shared — losing real build-time savings, not because
+// sharing it is unsafe (Gradle's local build cache is explicitly documented
+// as safe for concurrent read/write from multiple builds; it locks
+// per-entry, not build-wide, unlike the daemon registry) but just because
+// it happens to live under the same directory we now need to keep isolated
+// for a different reason.
+//
+// GRADLE_SHARED_BUILD_CACHE_DIR is set from Node (see buildRunner.js) to
+// the same persistent, outside-JOB_ROOT location as GRADLE_RO_DEP_CACHE.
+def sharedDir = System.getenv('GRADLE_SHARED_BUILD_CACHE_DIR')
+if (sharedDir) {
+  settingsEvaluated { settings ->
+    settings.buildCache {
+      local {
+        directory = sharedDir
+      }
+    }
+  }
+}
