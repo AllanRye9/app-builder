@@ -314,8 +314,10 @@ class _BuildContext:
             raise RuntimeError(f"Failed to start {command}: {exc}") from exc
 
         self.current_process = process
+        lines_captured = 0
 
         async def pipe_lines(stream: asyncio.StreamReader | None) -> None:
+            nonlocal lines_captured
             if stream is None:
                 return
             async for raw_line in stream:
@@ -325,6 +327,7 @@ class _BuildContext:
                 line = raw_line.decode("utf-8", errors="replace").rstrip("\n").rstrip("\r")
                 if line.strip():
                     log(job, line)
+                    lines_captured += 1
 
         await asyncio.gather(pipe_lines(process.stdout), pipe_lines(process.stderr))
         return_code = await process.wait()
@@ -333,6 +336,22 @@ class _BuildContext:
         if self.timed_out:
             raise RuntimeError(f"Build timed out after {round(settings.BUILD_TIMEOUT_MS / 1000)}s.")
         if return_code != 0:
+            # A failing command that produced literally no stdout/stderr is
+            # itself a useful signal, not just a dead end — it almost always
+            # means the process never got as far as doing real work (a
+            # missing/corrupt executable, a bad shebang, a JVM classpath
+            # entry pointing at a file that doesn't exist, etc.), rather
+            # than a normal build-logic failure, which always logs
+            # *something* on its way out. Surfacing that distinction here
+            # means the job log always explains *why* it's uninformative
+            # instead of just... being uninformative.
+            if lines_captured == 0:
+                log(
+                    job,
+                    f"(no output was produced by '{command}' before it exited with code {return_code} — "
+                    "this usually points to a missing/corrupt executable or dependency, e.g. for a Gradle "
+                    "wrapper, a missing gradle/wrapper/gradle-wrapper.jar, rather than a normal build error)",
+                )
             raise RuntimeError(f"{command} {' '.join(args)} exited with code {return_code}.")
 
     def run_gradle(self, gradlew_path: Path, android_dir: Path) -> Awaitable[None]:
@@ -348,6 +367,23 @@ class _BuildContext:
         already sized against this container's total RAM assuming each
         build is single-threaded on the Gradle side.
         """
+        # Defense in depth alongside validate.py's own wrapper check: catch
+        # a missing gradle-wrapper.jar/.properties here too, right before
+        # the command that would otherwise fail on it with little to no
+        # output (see the lines_captured==0 diagnostic in run()) — a
+        # one-line error here beats reverse-engineering a near-silent
+        # Gradle crash.
+        wrapper_dir = gradlew_path.parent / "gradle" / "wrapper"
+        missing = [
+            name
+            for name in ("gradle-wrapper.jar", "gradle-wrapper.properties")
+            if not (wrapper_dir / name).exists()
+        ]
+        if missing:
+            raise RuntimeError(
+                f"Cannot run the Gradle wrapper — missing {', '.join(missing)} in "
+                f"{wrapper_dir}. The project's Gradle wrapper is incomplete."
+            )
         gradlew_path.chmod(0o755)
         return self.run(
             str(gradlew_path),

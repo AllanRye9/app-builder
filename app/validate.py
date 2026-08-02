@@ -200,10 +200,28 @@ def validate_and_extract(zip_path: Path, dest_dir: Path) -> ExtractResult:
             "Could not confirm a package.json or settings.gradle at the project root after extraction."
         )
 
-    if project_type == "native-android" and not (dest_dir / "gradlew").exists():
-        raise ValidationError(
-            "Native Android projects must include the Gradle wrapper (gradlew, gradlew.bat, "
-            "gradle/wrapper/gradle-wrapper.*) so the build uses your pinned Gradle version."
-        )
+    if project_type == "native-android":
+        # All four wrapper files are required together — 'gradlew' alone is
+        # not enough. Without gradle-wrapper.jar in particular, the wrapper
+        # script's own `java -classpath .../gradle-wrapper.jar
+        # org.gradle.wrapper.GradleWrapperMain` line fails almost
+        # immediately (a missing classpath entry isn't a Java error by
+        # itself — it's simply skipped — so the *real* failure is
+        # "Could not find or load main class", often with little else on
+        # stdout/stderr to explain why). Catching this here, before a
+        # build is ever queued, turns that into one clear message instead
+        # of a confusing near-silent Gradle failure several minutes later.
+        missing_wrapper_files = [
+            rel
+            for rel in ("gradlew", "gradle/wrapper/gradle-wrapper.jar", "gradle/wrapper/gradle-wrapper.properties")
+            if not (dest_dir / rel).exists()
+        ]
+        if missing_wrapper_files:
+            raise ValidationError(
+                "Native Android projects must include the complete Gradle wrapper — missing: "
+                f"{', '.join(missing_wrapper_files)}. All of gradlew, gradlew.bat, and "
+                "gradle/wrapper/gradle-wrapper.{jar,properties} must be present (run `gradle "
+                "wrapper` in your project and re-zip it if any are missing)."
+            )
 
     return ExtractResult(skipped=skipped, project_type=project_type)
