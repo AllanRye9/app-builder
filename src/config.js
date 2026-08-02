@@ -50,6 +50,32 @@ const GRADLE_RO_DEP_CACHE = process.env.GRADLE_RO_DEP_CACHE || path.join(os.tmpd
 // to get redirected here instead of following GRADLE_USER_HOME.
 const GRADLE_SHARED_BUILD_CACHE_DIR = process.env.GRADLE_SHARED_BUILD_CACHE_DIR || path.join(os.tmpdir(), 'apk-builder-cache', 'gradle-build-cache');
 
+// Shared, persistent cache of fully-resolved node_modules trees, keyed by a
+// hash of package-lock.json (+ a few env fingerprints) — see src/depCache.js.
+// This is a different lever than NPM_CACHE_DIR above: the npm cache still
+// makes a fresh `npm ci` fast (no re-download), but it still spends real
+// wall-clock time re-linking/resolving the tree from tarballs every build.
+// When two builds share the exact same lockfile (extremely common — most
+// uploads are the same template project rebuilt, or share the same
+// Capacitor/React boilerplate), this skips `npm ci` entirely and just
+// reuses the already-linked node_modules via hardlinks.
+const DEP_CACHE_DIR = process.env.DEP_CACHE_DIR || path.join(os.tmpdir(), 'apk-builder-cache', 'node-modules-cache');
+// Bounds disk usage: oldest-used cache entries are evicted once this many
+// distinct lockfile hashes have accumulated.
+const DEP_CACHE_MAX_ENTRIES = parseInt(process.env.DEP_CACHE_MAX_ENTRIES || '8', 10);
+
+// Real OOM prevention, not just a job-count ceiling. MAX_CONCURRENT_BUILDS
+// caps how many builds are *allowed* to run at once, but two builds that
+// are each individually within budget can still combine to exceed the
+// container's actual RAM if the host is smaller than assumed, or if
+// something else running in the container is using more than expected at
+// that exact moment. This is a second, independent gate checked against
+// real-time os.freemem() immediately before starting any new build — see
+// buildRunner.js's pump(). A build that's ready to start but doesn't have
+// enough headroom waits and is re-checked, instead of starting and risking
+// the whole container getting OOM-killed.
+const MIN_FREE_MEMORY_MB = parseInt(process.env.MIN_FREE_MEMORY_MB || '512', 10);
+
 module.exports = {
   // Most platforms inject PORT themselves — the app must listen on
   // whatever it sets. Falls back to 3000 for local/bare `docker run` use.
@@ -79,4 +105,7 @@ module.exports = {
   NPM_CACHE_DIR,
   GRADLE_RO_DEP_CACHE,
   GRADLE_SHARED_BUILD_CACHE_DIR,
+  DEP_CACHE_DIR,
+  DEP_CACHE_MAX_ENTRIES,
+  MIN_FREE_MEMORY_MB,
 };

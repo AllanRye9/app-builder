@@ -1,15 +1,18 @@
 'use strict';
 
 const { spawn } = require('child_process');
+const os = require('os');
 const fs = require('fs');
 const path = require('path');
-const { log, notice, setStatus, setQueuePosition } = require('./jobStore');
+const { log, notice, setStatus, setStep, setQueuePosition } = require('./jobStore');
+const depCache = require('./depCache');
 const {
   MAX_CONCURRENT_BUILDS,
   BUILD_TIMEOUT_MS,
   NPM_CACHE_DIR,
   GRADLE_RO_DEP_CACHE,
   GRADLE_SHARED_BUILD_CACHE_DIR,
+  MIN_FREE_MEMORY_MB,
 } = require('./config');
 
 const SHARED_BUILD_CACHE_INIT_SCRIPT = path.join(__dirname, 'shared-build-cache-init.gradle');
@@ -32,8 +35,35 @@ fs.mkdirSync(GRADLE_SHARED_BUILD_CACHE_DIR, { recursive: true });
 // its contents itself on first use.
 fs.mkdirSync(path.join(GRADLE_RO_DEP_CACHE, 'modules-2'), { recursive: true });
 
+// Per-build Gradle JVM heap cap, sized against this container's *actual*
+// total RAM rather than a fixed guess — the same fixed -Xmx that's safe on
+// a 4GB host will happily let MAX_CONCURRENT_BUILDS=2 builds each claim
+// enough heap to OOM a 2GB host. Reserve headroom for the Node server
+// itself and the OS (RESERVED_MB), split the rest evenly across the
+// concurrency budget, and clamp to a sane range so a very large host
+// doesn't hand Gradle an enormous, wasteful heap and a very small one
+// doesn't starve it below what the Android Gradle Plugin needs to run at
+// all.
+const RESERVED_MB = 512;
+const MIN_BUILD_HEAP_MB = 768;
+const MAX_BUILD_HEAP_MB = 2048;
+const GRADLE_HEAP_MB = Math.max(
+  MIN_BUILD_HEAP_MB,
+  Math.min(
+    MAX_BUILD_HEAP_MB,
+    Math.floor((os.totalmem() / 1024 / 1024 - RESERVED_MB) / MAX_CONCURRENT_BUILDS)
+  )
+);
+
 const queue = [];
 let running = 0;
+// Builds waiting only because there wasn't enough free RAM at the moment
+// pump() last ran (as opposed to waiting because MAX_CONCURRENT_BUILDS was
+// already saturated) get re-checked on this timer instead of sitting idle
+// until the next unrelated queue change — memory freed up by a finished
+// build's own process exit/GC can otherwise take a moment to show up in
+// os.freemem().
+let memoryRecheckTimer = null;
 
 function enqueue(job) {
   queue.push(job);
@@ -47,8 +77,24 @@ function broadcastQueuePositions() {
   queue.forEach((job, i) => setQueuePosition(job, i + 1));
 }
 
+function freeMemMb() {
+  return os.freemem() / 1024 / 1024;
+}
+
 function pump() {
   while (running < MAX_CONCURRENT_BUILDS && queue.length > 0) {
+    // Real OOM guard, independent of the concurrency count above — see the
+    // MIN_FREE_MEMORY_MB comment in config.js. Checked fresh on every loop
+    // iteration (not just once per pump() call) because starting one job
+    // changes how much memory is available for the next.
+    if (freeMemMb() < MIN_FREE_MEMORY_MB) {
+      const job = queue[0];
+      if (job) {
+        log(job, `Waiting for available memory before starting (${Math.round(freeMemMb())}MB free, need ${MIN_FREE_MEMORY_MB}MB).`);
+      }
+      scheduleMemoryRecheck();
+      break;
+    }
     const job = queue.shift();
     running += 1;
     setQueuePosition(job, 0);
@@ -58,6 +104,15 @@ function pump() {
       broadcastQueuePositions();
     });
   }
+}
+
+function scheduleMemoryRecheck() {
+  if (memoryRecheckTimer) return;
+  memoryRecheckTimer = setTimeout(() => {
+    memoryRecheckTimer = null;
+    pump();
+  }, 5000);
+  memoryRecheckTimer.unref?.();
 }
 
 function detectWebDir(projectDir) {
@@ -233,7 +288,22 @@ async function runBuild(job) {
       // so pinning IPv4 here reaches all of them consistently. The JVM
       // prints one "Picked up JAVA_TOOL_OPTIONS: ..." line per process to
       // stderr when this is set — expected, and harmless.
-      childEnv.JAVA_TOOL_OPTIONS = [childEnv.JAVA_TOOL_OPTIONS, '-Djava.net.preferIPv4Stack=true']
+      // Caps how much heap any single JVM this build spawns (gradlew's own
+      // launcher JVM, since --no-daemon runs the build inside it directly)
+      // can claim, sized against this container's real total RAM and
+      // MAX_CONCURRENT_BUILDS — see GRADLE_HEAP_MB above. Without this,
+      // Gradle/the JVM pick a default heap based on the *host's* total
+      // memory with no awareness that MAX_CONCURRENT_BUILDS other JVMs
+      // might be claiming the same budget at once, which is exactly how
+      // two "individually reasonable" concurrent builds add up to an
+      // OOM-killed container. Only applies to `java`-launched processes
+      // (i.e. Gradle), not the npm/node steps below, which don't take a
+      // JVM heap flag.
+      childEnv.JAVA_TOOL_OPTIONS = [
+        childEnv.JAVA_TOOL_OPTIONS,
+        '-Djava.net.preferIPv4Stack=true',
+        `-Xmx${GRADLE_HEAP_MB}m`,
+      ]
         .filter(Boolean)
         .join(' ');
 
@@ -314,6 +384,7 @@ async function runBuild(job) {
 
   try {
     setStatus(job, 'building');
+    setStep(job, 'Preparing build environment', 5);
 
     if (job.projectType === 'native-android') {
       await runNativeAndroidBuild(job, projectDir, run, runGradle);
@@ -321,6 +392,7 @@ async function runBuild(job) {
       await runCapacitorBuild(job, projectDir, run, runGradle);
     }
 
+    setStep(job, 'Build complete', 100);
     log(job, 'Build succeeded.');
     setStatus(job, 'success');
   } catch (err) {
@@ -339,18 +411,52 @@ async function runCapacitorBuild(job, projectDir, run, runGradle) {
   const androidDir = path.join(projectDir, 'android');
 
   const hasLockfile = fs.existsSync(path.join(projectDir, 'package-lock.json'));
-  // --include=dev is explicit and outranks any NODE_ENV, .npmrc
-  // "production=true"/"omit=dev", or NPM_CONFIG_* env var that might
-  // otherwise cause devDependencies (the project's own build tool) to be
-  // skipped. --prefer-offline/--no-audit/--no-fund trim network round trips
-  // that don't affect what gets installed, just how long it takes.
-  await run('npm', [
-    ...(hasLockfile ? ['ci'] : ['install']),
-    '--include=dev',
-    '--prefer-offline',
-    '--no-audit',
-    '--no-fund',
-  ]);
+
+  // Dependency cache: skip `npm ci`/`install` entirely when a previous
+  // build already resolved this exact lockfile — see depCache.js for the
+  // full rationale and the fingerprint (hash) definition, which folds in
+  // the Node version and pinned Capacitor major so a mismatch there
+  // automatically forces a real reinstall instead of reusing a stale tree.
+  const depHash = depCache.fingerprint(projectDir);
+  const cacheHit = depHash ? depCache.restore(depHash, projectDir) : false;
+
+  if (cacheHit) {
+    setStep(job, 'Installing dependencies', 15, { cacheHit: true });
+    log(job, 'Dependency cache hit — reusing a previously installed node_modules for this exact lockfile, skipping npm install.');
+    notice(job, {
+      level: 'info',
+      title: 'Dependency cache hit',
+      message: 'This project\'s package-lock.json matches a previous build, so npm install was skipped entirely.',
+    });
+  } else {
+    setStep(job, 'Installing dependencies', 10, { cacheHit: false });
+    if (depHash) {
+      log(job, 'No matching dependency cache found — installing fresh (this will be cached for future builds with the same lockfile).');
+    }
+    // --include=dev is explicit and outranks any NODE_ENV, .npmrc
+    // "production=true"/"omit=dev", or NPM_CONFIG_* env var that might
+    // otherwise cause devDependencies (the project's own build tool) to be
+    // skipped. --prefer-offline/--no-audit/--no-fund trim network round
+    // trips that don't affect what gets installed, just how long it takes.
+    await run('npm', [
+      ...(hasLockfile ? ['ci'] : ['install']),
+      '--include=dev',
+      '--prefer-offline',
+      '--no-audit',
+      '--no-fund',
+    ]);
+    // Fire-and-forget from the caller's perspective would race the rest of
+    // the build reading/writing node_modules, so this is awaited — but it's
+    // a local hardlink operation (see depCache.js), not a slow copy, so the
+    // cost here is minimal compared to what it saves on every future build
+    // that hashes the same lockfile.
+    if (depHash) {
+      const saved = depCache.save(depHash, projectDir);
+      if (saved) log(job, 'Cached this dependency tree for future builds with the same lockfile.');
+    }
+  }
+
+  setStep(job, 'Building web assets', 30);
   await run('npm', ['run', 'build']);
 
   const webDir = detectWebDir(projectDir);
@@ -359,6 +465,7 @@ async function runCapacitorBuild(job, projectDir, run, runGradle) {
   }
   log(job, `Detected web build output at ${webDir}/.`);
 
+  setStep(job, 'Setting up Android project (Capacitor)', 45);
   await run('npm', [
     'install', '--no-save', '--prefer-offline', '--no-audit', '--no-fund',
     `@capacitor/core@${CAPACITOR_MAJOR}`,
@@ -390,6 +497,7 @@ async function runCapacitorBuild(job, projectDir, run, runGradle) {
 
   patchManifestPermissions(job, path.join(androidDir, 'app', 'src', 'main', 'AndroidManifest.xml'));
 
+  setStep(job, 'Compiling APK with Gradle', 65);
   // Using the absolute path (not './gradlew') is deliberate: Node resolves
   // a relative command against the *calling process's* cwd, not the
   // spawned child's `cwd` option — './gradlew' here would actually look
@@ -397,6 +505,7 @@ async function runCapacitorBuild(job, projectDir, run, runGradle) {
   // the project. The absolute path sidesteps that ambiguity entirely.
   await runGradle(path.join(androidDir, 'gradlew'), androidDir);
 
+  setStep(job, 'Finalizing APK', 95);
   const apkSourcePath = path.join(androidDir, 'app', 'build', 'outputs', 'apk', 'debug', 'app-debug.apk');
   if (!fs.existsSync(apkSourcePath)) {
     throw new Error('Gradle reported success but no APK was found at the expected output path.');
@@ -419,6 +528,7 @@ async function runNativeAndroidBuild(job, projectDir, run, runGradle) {
   }
 
   log(job, 'Native Kotlin/Java Android project detected — building directly with its own Gradle wrapper.');
+  setStep(job, 'Preparing native Android project', 20);
 
   // A module's manifest can live at any <module>/src/main/AndroidManifest.xml
   // (usually just app/, but multi-module projects are common) — search for
@@ -428,8 +538,10 @@ async function runNativeAndroidBuild(job, projectDir, run, runGradle) {
     patchManifestPermissions(job, manifestPath);
   }
 
+  setStep(job, 'Compiling APK with Gradle', 50);
   await runGradle(gradlewPath, projectDir);
 
+  setStep(job, 'Finalizing APK', 95);
   const apks = findFilesRecursive(
     path.join(projectDir),
     (name) => name.endsWith('.apk'),
@@ -454,4 +566,8 @@ function finalizeApk(job, apkSourcePath) {
   job.apkPath = finalApkPath;
 }
 
-module.exports = { enqueue };
+function getBuildCounts() {
+  return { running, queued: queue.length };
+}
+
+module.exports = { enqueue, getBuildCounts };

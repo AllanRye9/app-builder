@@ -3,6 +3,7 @@ import Dropzone from './components/Dropzone.jsx';
 import JobTicket from './components/JobTicket.jsx';
 import ToastStack from './components/ToastStack.jsx';
 import PermissionsPicker from './components/PermissionsPicker.jsx';
+import SystemStatusBar from './components/SystemStatusBar.jsx';
 import { uploadZip } from './api.js';
 
 let nextTempId = 0;
@@ -115,6 +116,8 @@ export default function App() {
           line behind anything else.
         </p>
       </header>
+
+      <SystemStatusBar />
 
       <PermissionsPicker selected={permissions} onChange={setPermissions} />
       <Dropzone onFilesSelected={handleFilesSelected} />

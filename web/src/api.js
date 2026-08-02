@@ -53,7 +53,7 @@ export async function uploadZip(file, permissions = []) {
   return data.jobId;
 }
 
-export function streamLogs(jobId, { onLog, onNotice, onStatus, onQueue, onDone }) {
+export function streamLogs(jobId, { onLog, onNotice, onStatus, onQueue, onStep, onDone }) {
   const source = new EventSource(`${API_BASE}/api/logs/${jobId}/stream`);
 
   source.onmessage = (e) => {
@@ -72,6 +72,13 @@ export function streamLogs(jobId, { onLog, onNotice, onStatus, onQueue, onDone }
     onQueue?.(JSON.parse(e.data));
   });
 
+  // Fine-grained progress within the 'building' stage — see setStep() in
+  // src/jobStore.js. Distinct from 'status', which only carries the 4 big
+  // macro stages the Pipeline stepper shows.
+  source.addEventListener('step', (e) => {
+    onStep?.(JSON.parse(e.data));
+  });
+
   source.addEventListener('done', (e) => {
     onDone?.(JSON.parse(e.data));
     source.close();
@@ -86,4 +93,13 @@ export function streamLogs(jobId, { onLog, onNotice, onStatus, onQueue, onDone }
 
 export function downloadUrl(jobId) {
   return `${API_BASE}/api/download/${jobId}`;
+}
+
+// Powers the standing status bar (SystemStatusBar.jsx) — a single,
+// always-visible read on real container capacity (active/queued builds,
+// memory headroom) rather than something only inferable per-job.
+export async function fetchSystemStatus() {
+  const res = await fetch(`${API_BASE}/api/system`);
+  if (!res.ok) throw new Error(`System status request failed: HTTP ${res.status}`);
+  return res.json();
 }

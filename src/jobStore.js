@@ -28,6 +28,15 @@ function createJob(filename, permissions) {
     projectDir: path.join(dir, 'project'),
     outputDir: path.join(dir, 'output'),
     apkPath: null,
+    // Fine-grained progress within the 'building' macro-status — see
+    // setStep() below. Distinct from `status` (which the Pipeline stepper
+    // uses for its 4 big stages): this drives the in-progress detail line
+    // and percentage bar inside the 'Build' stage itself, e.g. "Installing
+    // dependencies (cache hit)" at 20% vs "Compiling APK with Gradle" at
+    // 70%, so the dashboard can show real signal instead of one static
+    // "Build" label sitting there for however many minutes Gradle takes.
+    step: null,
+    stepProgress: 0,
     // Chosen by whoever uploaded the project — never invented by the build
     // itself. See src/permissions.js for the whitelist/sanitizer and
     // src/buildRunner.js for where these actually get applied.
@@ -71,6 +80,17 @@ function setQueuePosition(job, position) {
   bus.emit(`queue:${job.id}`, { position });
 }
 
+// label: short human-readable description of what's happening right now.
+// progress: 0-100, monotonic within a single build's 'building' status.
+// meta: optional extra flags for the UI, e.g. { cacheHit: true } so a
+// dependency-cache hit can be badged distinctly from a normal install.
+function setStep(job, label, progress, meta) {
+  job.step = label;
+  job.stepProgress = progress;
+  const payload = { step: label, progress, ...(meta || {}) };
+  bus.emit(`step:${job.id}`, payload);
+}
+
 function setStatus(job, status, error) {
   job.status = status;
   if (error) job.error = error;
@@ -89,6 +109,7 @@ function purgeJob(job) {
   bus.removeAllListeners(`notice:${job.id}`);
   bus.removeAllListeners(`status:${job.id}`);
   bus.removeAllListeners(`queue:${job.id}`);
+  bus.removeAllListeners(`step:${job.id}`);
   bus.removeAllListeners(`done:${job.id}`);
   jobs.delete(job.id);
 }
@@ -101,4 +122,4 @@ setInterval(() => {
   }
 }, 5 * 60 * 1000).unref();
 
-module.exports = { jobs, bus, createJob, log, notice, setStatus, setQueuePosition, purgeJob };
+module.exports = { jobs, bus, createJob, log, notice, setStatus, setStep, setQueuePosition, purgeJob };

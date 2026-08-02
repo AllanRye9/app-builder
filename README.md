@@ -30,10 +30,11 @@ Browser (React dashboard)
    │  live per-job logs + queue position over SSE, toast on completion/error
    ▼
 Express server (src/) — one process
-   │  validate zip → extract → bounded queue (MAX_CONCURRENT_BUILDS)
+   │  validate zip → extract → bounded queue (MAX_CONCURRENT_BUILDS + live memory check)
    ▼
 src/buildRunner.js — runs each build as direct subprocesses, in this same container
-   │  npm install → npm run build → cap add android → gradlew assembleDebug
+   │  lockfile hash → dep cache hit? skip install : npm install → npm run build
+   │  → cap add android → gradlew assembleDebug (heap capped to container RAM)
    ▼
 app.apk served for download from this same server
 ```
@@ -62,6 +63,53 @@ concurrent build.
   OOM-killed under load.
 - A reasonable baseline anywhere: **2GB RAM minimum**, comfortably handles `MAX_CONCURRENT_BUILDS=2`.
   Go up from there before raising concurrency further.
+- Two independent guards keep this from becoming an OOM problem in practice:
+  - **Live memory admission control.** Before starting any queued build, `buildRunner.js` checks
+    real `os.freemem()` against `MIN_FREE_MEMORY_MB` (default 512MB). If headroom is too thin —
+    even if a build slot is technically free under `MAX_CONCURRENT_BUILDS` — the build waits and is
+    re-checked every 5s instead of starting and risking the whole container going down. The
+    dashboard's status bar and the job's own log surface this ("Waiting for available memory...")
+    so it's visible, not a silent stall.
+  - **Dynamic per-build Gradle heap cap.** Each build's JVM is capped via `-Xmx`, sized from this
+    container's *actual* total RAM divided across `MAX_CONCURRENT_BUILDS` (clamped between 768MB
+    and 2GB), not a fixed guess. This is computed once at startup in `src/buildRunner.js` — a value
+    safe on a large host would starve a small one, and a value safe on a small host would waste
+    headroom on a large one; sizing it against `os.totalmem()` avoids both.
+
+## Faster builds: two layers of caching
+
+Every build reuses whatever the container has already downloaded/installed, on two levels:
+
+- **npm/Gradle download cache** (`NPM_CACHE_DIR`, `GRADLE_RO_DEP_CACHE`, `GRADLE_SHARED_BUILD_CACHE_DIR`
+  — all outside `JOB_ROOT`, so they survive individual job cleanup): stops repeat downloads of the
+  same package/artifact versions, but a fresh `npm ci` still spends real time re-resolving and
+  re-linking the tree from that cache on every build.
+- **Dependency-cache** (`src/depCache.js`, new): keyed by a hash of the project's
+  `package-lock.json` plus the Node version and pinned Capacitor major. When a build's lockfile
+  hash matches one already seen, the previously-installed `node_modules` is hardlinked straight
+  into the project — `npm ci`/`install` is skipped entirely, not just sped up. This is the
+  "install once, compile many times" behavior for repeat/near-identical uploads: most real-world
+  re-uploads (a source tweak with no dependency change, or the same starter template rebuilt) hit
+  this. On a lockfile *mismatch*, it automatically falls through to a normal install and caches the
+  new result — no manual cache-busting needed. Bounded to `DEP_CACHE_MAX_ENTRIES` (default 8) most
+  recently used lockfile hashes via simple LRU eviction, so disk usage doesn't grow unbounded.
+
+The dashboard's build-detail line shows a **⚡ cache hit** badge whenever this kicks in, so it's
+visible which builds actually skipped installation.
+
+## Standing build status
+
+Two status surfaces, at different scopes:
+
+- **Per-job pipeline** (`Pipeline.jsx`): the 4 macro stages (Validate → Queue → Build → Ready) plus,
+  while a build is in the 'Build' stage, a live detail line and progress bar (e.g. "Compiling APK
+  with Gradle" at 65%) driven by `setStep()` calls in `src/buildRunner.js` and streamed over the
+  same SSE connection as the log lines.
+- **System status bar** (`SystemStatusBar.jsx`, above the upload dropzone): a standing,
+  always-visible read on the container's *real* capacity — active/queued build slots and live
+  memory headroom — polling the new `GET /api/system` endpoint every 4s. This is what answers "why
+  isn't my build starting" (concurrency-limited vs. memory-limited) without digging into logs, and
+  turns red when free memory drops below `MIN_FREE_MEMORY_MB`.
 
 ## Environment variables
 
@@ -71,6 +119,7 @@ All optional, all have defaults in `src/config.js`:
 |---|---|---|
 | `PORT` | `3000` | Most platforms inject this themselves — leave it unless running bare |
 | `MAX_CONCURRENT_BUILDS` | `2` | See sizing note above |
+| `MIN_FREE_MEMORY_MB` | `512` | Real-time free-RAM floor a build must clear before starting — see sizing note above |
 | `BUILD_TIMEOUT_MS` | `900000` (15 min) | Kills the whole build if any step hangs |
 | `MAX_UPLOAD_BYTES` | `314572800` (300MB) | Max accepted zip size |
 | `JOB_TTL_MS` | `3600000` (1 hr) | How long a finished job's files stick around |
@@ -78,6 +127,8 @@ All optional, all have defaults in `src/config.js`:
 | `APP_ID` / `APP_NAME` | `com.builder.app` / `MyApp` | Baked into every generated APK |
 | `CORS_ORIGIN` | `*` | Only matters if you split the frontend out to a separate static host |
 | `JOB_ROOT` | `/tmp/apk-builder-jobs` | Where job workspaces live — ephemeral by design, see below |
+| `DEP_CACHE_DIR` | `/tmp/apk-builder-cache/node-modules-cache` | Shared node_modules cache — see "Faster builds" above |
+| `DEP_CACHE_MAX_ENTRIES` | `8` | How many distinct lockfile hashes to keep cached before LRU-evicting |
 
 ## Job storage is deliberately ephemeral
 

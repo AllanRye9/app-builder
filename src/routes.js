@@ -3,12 +3,13 @@
 const express = require('express');
 const multer = require('multer');
 const fs = require('fs');
+const os = require('os');
 const path = require('path');
-const { MAX_UPLOAD_BYTES, JOB_ROOT, RATE_LIMIT_MAX, RATE_LIMIT_WINDOW_MS } = require('./config');
+const { MAX_UPLOAD_BYTES, JOB_ROOT, MAX_CONCURRENT_BUILDS, MIN_FREE_MEMORY_MB, RATE_LIMIT_MAX, RATE_LIMIT_WINDOW_MS } = require('./config');
 const { jobs, bus, createJob, log, notice, setStatus, purgeJob } = require('./jobStore');
 const { validateAndExtract, ValidationError } = require('./validate');
 const { sanitizePermissions } = require('./permissions');
-const { enqueue } = require('./buildRunner');
+const { enqueue, getBuildCounts } = require('./buildRunner');
 
 const router = express.Router();
 
@@ -17,6 +18,28 @@ const router = express.Router();
 // access, so it stays fast even while builds are running.
 router.get('/health', (req, res) => {
   res.status(200).json({ ok: true });
+});
+
+// Powers the dashboard's global status bar — a standardized, always-visible
+// read on the container's real capacity (not just per-job state), so
+// "why is my build not starting yet" has a visible answer (queued behind
+// concurrency, or waiting on free memory) instead of a silent queue.
+router.get('/system', (req, res) => {
+  const { running, queued } = getBuildCounts();
+  const totalMb = Math.round(os.totalmem() / 1024 / 1024);
+  const freeMb = Math.round(os.freemem() / 1024 / 1024);
+  res.json({
+    running,
+    queued,
+    maxConcurrentBuilds: MAX_CONCURRENT_BUILDS,
+    memory: {
+      totalMb,
+      freeMb,
+      usedMb: totalMb - freeMb,
+      minFreeMb: MIN_FREE_MEMORY_MB,
+      lowMemory: freeMb < MIN_FREE_MEMORY_MB,
+    },
+  });
 });
 
 const upload = multer({
@@ -140,6 +163,8 @@ router.get('/status/:jobId', (req, res) => {
     downloadReady: job.status === 'success' && !!job.apkPath,
     projectType: job.projectType,
     permissions: job.permissions,
+    step: job.step,
+    stepProgress: job.stepProgress,
   });
 });
 
@@ -162,6 +187,9 @@ router.get('/logs/:jobId/stream', (req, res) => {
   if (job.queuePosition != null) {
     res.write(`event: queue\ndata: ${JSON.stringify({ position: job.queuePosition })}\n\n`);
   }
+  if (job.step) {
+    res.write(`event: step\ndata: ${JSON.stringify({ step: job.step, progress: job.stepProgress })}\n\n`);
+  }
 
   // A job can already be terminal by the time the client connects — e.g. an
   // archive that fails validation goes straight to 'failed' synchronously,
@@ -179,6 +207,7 @@ router.get('/logs/:jobId/stream', (req, res) => {
   const onNotice = (payload) => res.write(`event: notice\ndata: ${JSON.stringify(payload)}\n\n`);
   const onStatus = (payload) => res.write(`event: status\ndata: ${JSON.stringify(payload)}\n\n`);
   const onQueue = (payload) => res.write(`event: queue\ndata: ${JSON.stringify(payload)}\n\n`);
+  const onStep = (payload) => res.write(`event: step\ndata: ${JSON.stringify(payload)}\n\n`);
   const onDone = (payload) => {
     res.write(`event: done\ndata: ${JSON.stringify(payload)}\n\n`);
     cleanupListeners();
@@ -190,6 +219,7 @@ router.get('/logs/:jobId/stream', (req, res) => {
     bus.off(`notice:${job.id}`, onNotice);
     bus.off(`status:${job.id}`, onStatus);
     bus.off(`queue:${job.id}`, onQueue);
+    bus.off(`step:${job.id}`, onStep);
     bus.off(`done:${job.id}`, onDone);
   }
 
@@ -197,6 +227,7 @@ router.get('/logs/:jobId/stream', (req, res) => {
   bus.on(`notice:${job.id}`, onNotice);
   bus.on(`status:${job.id}`, onStatus);
   bus.on(`queue:${job.id}`, onQueue);
+  bus.on(`step:${job.id}`, onStep);
   bus.on(`done:${job.id}`, onDone);
 
   req.on('close', cleanupListeners);

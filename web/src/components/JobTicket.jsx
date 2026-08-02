@@ -14,6 +14,9 @@ export default function JobTicket({ job, onUpdate, onDone, onNotice, onRemove })
   const [logs, setLogs] = useState([]);
   const [stage, setStage] = useState('validating');
   const [expanded, setExpanded] = useState(false);
+  const [buildStep, setBuildStep] = useState(null);
+  const [buildProgress, setBuildProgress] = useState(0);
+  const [cacheHit, setCacheHit] = useState(false);
   const doneFired = useRef(false);
 
   useEffect(() => {
@@ -28,6 +31,11 @@ export default function JobTicket({ job, onUpdate, onDone, onNotice, onRemove })
         if (status !== 'success' && status !== 'failed') setStage(status);
       },
       onQueue: ({ position }) => onUpdate({ queuePosition: position }),
+      onStep: ({ step, progress, cacheHit: hit }) => {
+        setBuildStep(step);
+        setBuildProgress(progress || 0);
+        if (hit) setCacheHit(true);
+      },
       onDone: ({ status, error }) => {
         onUpdate({ status, error: error || null, downloadReady: status === 'success' });
         // Only advance the stepper on success. On failure, leave `stage` as
@@ -73,7 +81,14 @@ export default function JobTicket({ job, onUpdate, onDone, onNotice, onRemove })
           </div>
         </div>
 
-        <Pipeline activeStage={stage} failed={job.status === 'failed'} queuePosition={job.queuePosition} />
+        <Pipeline
+          activeStage={stage}
+          failed={job.status === 'failed'}
+          queuePosition={job.queuePosition}
+          buildStep={buildStep}
+          buildProgress={buildProgress}
+          cacheHit={cacheHit}
+        />
 
         <ErrorBanner message={job.status === 'failed' ? job.error : ''} />
 
