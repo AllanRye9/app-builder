@@ -23,6 +23,14 @@ const CAPACITOR_MAJOR = process.env.CAPACITOR_MAJOR || '7';
 fs.mkdirSync(NPM_CACHE_DIR, { recursive: true });
 fs.mkdirSync(GRADLE_RO_DEP_CACHE, { recursive: true });
 fs.mkdirSync(GRADLE_SHARED_BUILD_CACHE_DIR, { recursive: true });
+// Gradle's shared read-only dependency cache (GRADLE_RO_DEP_CACHE, set per
+// job in run() below) refuses to activate unless this exact subdirectory
+// already exists — otherwise every single build logs "Read-only cache is
+// configured but the directory layout isn't expected" and silently falls
+// back to a normal (unshared) cache, so the intended time savings never
+// actually happen. Pre-creating it once here is enough; Gradle populates
+// its contents itself on first use.
+fs.mkdirSync(path.join(GRADLE_RO_DEP_CACHE, 'modules-2'), { recursive: true });
 
 const queue = [];
 let running = 0;
@@ -204,6 +212,30 @@ async function runBuild(job) {
       childEnv.GRADLE_USER_HOME = jobGradleHome;
       childEnv.GRADLE_RO_DEP_CACHE = GRADLE_RO_DEP_CACHE;
       childEnv.GRADLE_SHARED_BUILD_CACHE_DIR = GRADLE_SHARED_BUILD_CACHE_DIR;
+
+      // Isolating GRADLE_USER_HOME above stops one job's daemon registry
+      // from colliding with another job's — but it does NOT stop the
+      // *other* known cause of the same symptom: on a container/host with
+      // both IPv4 and IPv6 loopback enabled, the gradlew launcher JVM and
+      // the single-use daemon JVM it forks can each resolve "localhost"
+      // to a different loopback address family. The client then connects
+      // over one address family while the daemon's socket is bound to the
+      // other; whatever accepts the connection isn't speaking the same
+      // handshake, and the daemon logs exactly what's in the build log
+      // here: "Unable to receive command from client socket connection"
+      // followed by "Unexpected type tag N found", forever, once a
+      // second, until BUILD_TIMEOUT_MS kills the job — it never resolves
+      // on its own, same as the registry-collision case.
+      //
+      // JAVA_TOOL_OPTIONS is read directly by every `java` invocation
+      // (the wrapper's launcher JVM, the daemon JVM it forks, and any
+      // worker JVMs Gradle starts), not just ones Gradle itself controls,
+      // so pinning IPv4 here reaches all of them consistently. The JVM
+      // prints one "Picked up JAVA_TOOL_OPTIONS: ..." line per process to
+      // stderr when this is set — expected, and harmless.
+      childEnv.JAVA_TOOL_OPTIONS = [childEnv.JAVA_TOOL_OPTIONS, '-Djava.net.preferIPv4Stack=true']
+        .filter(Boolean)
+        .join(' ');
 
       const child = spawn(command, args, {
         cwd: opts.cwd || projectDir,
