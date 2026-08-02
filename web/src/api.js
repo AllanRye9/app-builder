@@ -3,7 +3,38 @@
 // split the frontend out to a separate static host, set VITE_API_BASE_URL to
 // this service's full URL and set CORS_ORIGIN on the server (src/config.js)
 // to the frontend's origin.
-const API_BASE = (import.meta.env.VITE_API_BASE_URL || '').replace(/\/$/, '');
+const PRIMARY_API_BASE = (import.meta.env.VITE_API_BASE_URL || '').replace(/\/$/, '');
+
+// Alternate backend, tried only if the primary base above is genuinely
+// unreachable (fetch() throws — DNS failure, connection refused, CORS
+// preflight rejection). Whichever base a request actually succeeds against
+// is remembered in `activeApiBase` so subsequent calls for the same job
+// (log streaming, download) go straight to the right host instead of
+// re-probing the primary first every time.
+const FALLBACK_API_BASE = 'https://app-builder-gray.vercel.app';
+let activeApiBase = PRIMARY_API_BASE;
+
+// Tries `activeApiBase` first; if the request can't even reach that host,
+// retries once against whichever of PRIMARY_API_BASE/FALLBACK_API_BASE it
+// didn't just try. Returns the successful Response and updates
+// `activeApiBase` to match, or re-throws the original network error if
+// neither base is reachable.
+async function fetchWithFallback(path, init) {
+  try {
+    const res = await fetch(`${activeApiBase}${path}`, init);
+    return res;
+  } catch (primaryErr) {
+    const otherBase = activeApiBase === FALLBACK_API_BASE ? PRIMARY_API_BASE : FALLBACK_API_BASE;
+    if (otherBase === activeApiBase) throw primaryErr; // nothing else to try
+    try {
+      const res = await fetch(`${otherBase}${path}`, init);
+      activeApiBase = otherBase; // this base works — stick with it going forward
+      return res;
+    } catch {
+      throw primaryErr; // report the original failure; both bases are down
+    }
+  }
+}
 
 export async function uploadZip(file, permissions = []) {
   const formData = new FormData();
@@ -17,15 +48,13 @@ export async function uploadZip(file, permissions = []) {
 
   let res;
   try {
-    res = await fetch(`${API_BASE}/api/upload`, { method: 'POST', body: formData });
+    res = await fetchWithFallback('/api/upload', { method: 'POST', body: formData });
   } catch {
-    // fetch() itself threw: DNS failure, connection refused, or a CORS
-    // preflight rejection. API_BASE being wrong/unreachable is the most
-    // common cause here.
+    // Neither the primary base nor the fallback could be reached at all.
     throw new Error(
-      API_BASE
-        ? `Can't reach the build worker at ${API_BASE}. Check VITE_API_BASE_URL and that the worker is running.`
-        : "Can't reach the API. If the frontend is deployed separately from the backend, set VITE_API_BASE_URL to the backend's URL."
+      PRIMARY_API_BASE
+        ? `Can't reach the build worker at ${PRIMARY_API_BASE} (or the fallback at ${FALLBACK_API_BASE}). Check VITE_API_BASE_URL and that a worker is running.`
+        : `Can't reach the API (tried this origin and the fallback at ${FALLBACK_API_BASE}). If the frontend is deployed separately from the backend, set VITE_API_BASE_URL to the backend's URL.`
     );
   }
 
@@ -43,7 +72,7 @@ export async function uploadZip(file, permissions = []) {
       `Upload failed: server returned HTTP ${res.status} ${res.statusText} (not JSON) — ` +
       (res.status === 413
         ? "the file is likely being rejected by a reverse proxy before reaching the app; check its max body size."
-        : `check that ${API_BASE || 'the API'} is actually the build worker, not just a static host.`)
+        : `check that ${activeApiBase || 'the API'} is actually the build worker, not just a static host.`)
     );
   }
 
@@ -54,7 +83,10 @@ export async function uploadZip(file, permissions = []) {
 }
 
 export function streamLogs(jobId, { onLog, onNotice, onStatus, onQueue, onStep, onDone }) {
-  const source = new EventSource(`${API_BASE}/api/logs/${jobId}/stream`);
+  // Uses whichever base the upload for this job actually succeeded
+  // against (see fetchWithFallback above) rather than re-probing here —
+  // EventSource has no built-in concept of "try this other host instead".
+  const source = new EventSource(`${activeApiBase}/api/logs/${jobId}/stream`);
 
   source.onmessage = (e) => {
     onLog?.(JSON.parse(e.data));
@@ -92,14 +124,14 @@ export function streamLogs(jobId, { onLog, onNotice, onStatus, onQueue, onStep, 
 }
 
 export function downloadUrl(jobId) {
-  return `${API_BASE}/api/download/${jobId}`;
+  return `${activeApiBase}/api/download/${jobId}`;
 }
 
 // Powers the standing status bar (SystemStatusBar.jsx) — a single,
 // always-visible read on real container capacity (active/queued builds,
 // memory headroom) rather than something only inferable per-job.
 export async function fetchSystemStatus() {
-  const res = await fetch(`${API_BASE}/api/system`);
+  const res = await fetchWithFallback('/api/system');
   if (!res.ok) throw new Error(`System status request failed: HTTP ${res.status}`);
   return res.json();
 }

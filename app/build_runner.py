@@ -281,12 +281,31 @@ class _BuildContext:
         child_env["GRADLE_OPTS"] = " ".join(filter(None, [child_env.get("GRADLE_OPTS"), gradle_jvm_args]))
         child_env.pop("JAVA_TOOL_OPTIONS", None)
 
+        # Belt-and-suspenders against a build that "never completes": with no
+        # stdin argument, asyncio inherits this *server's* stdin, which in a
+        # container is typically closed/non-interactive but isn't guaranteed
+        # to be. If any tool in the chain (npm, npx, a Capacitor/Gradle
+        # prompt for an unexpected reason) ever tries to read a y/n
+        # confirmation from stdin, an inherited-but-unresponsive stdin means
+        # the child blocks forever waiting for input that will never arrive —
+        # BUILD_TIMEOUT_MS's watchdog would still eventually kill it, but not
+        # before wasting the full timeout window on every single such build.
+        # Explicitly closing stdin makes any such prompt fail fast (EOF)
+        # instead of hanging. CI=true / npm's non-interactive env vars are
+        # the same idea one layer up: tell npm/npx/Capacitor's own CLIs not
+        # to prompt at all.
+        child_env["CI"] = "true"
+        child_env["npm_config_yes"] = "true"
+        child_env["NPM_CONFIG_FUND"] = "false"
+        child_env["NPM_CONFIG_AUDIT"] = "false"
+
         try:
             process = await asyncio.create_subprocess_exec(
                 command,
                 *args,
                 cwd=str(cwd or job.project_dir),
                 env=child_env,
+                stdin=asyncio.subprocess.DEVNULL,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
                 start_new_session=True,  # own process group, so a timeout kill can take any forked subprocesses with it

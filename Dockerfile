@@ -51,8 +51,32 @@ RUN mkdir -p $ANDROID_SDK_ROOT/cmdline-tools && \
     mv $ANDROID_SDK_ROOT/cmdline-tools/cmdline-tools $ANDROID_SDK_ROOT/cmdline-tools/latest && \
     rm /tmp/cmdline-tools.zip
 
-RUN yes | sdkmanager --licenses > /dev/null 2>&1 || true && \
-    sdkmanager --install "platform-tools" "platforms;android-34" "build-tools;34.0.0" > /dev/null
+# Capacitor's default major version pinned in app/config.py (CAPACITOR_MAJOR,
+# currently "7") requires compileSdkVersion/targetSdkVersion 35 — see
+# https://capacitorjs.com/docs/updating/7-0. Only having android-34 +
+# build-tools 34.0.0 here (as an earlier revision of this image did) meant
+# every default Capacitor build had to auto-download SDK Platform 35 and
+# build-tools 35.0.0 from Google's servers on its *first* build in a fresh
+# container — adding several extra minutes on top of the Gradle
+# distribution/dependency downloads that first build already has to do, and
+# an easy way to blow past BUILD_TIMEOUT_MS (15 min default) or hang if that
+# on-demand download stalls. Pre-installing both here means every build,
+# from the very first one in a fresh container, only ever needs what's
+# already on disk. android-34/build-tools 34.0.0 are kept alongside so
+# native-Android uploads pinned to the older SDK still build unmodified.
+#
+# `set -e` (not `|| true`) so a real sdkmanager failure fails the image
+# build here, loudly, instead of silently shipping an image that will only
+# discover the problem — as a build that never completes — once real
+# traffic hits it.
+RUN set -e && \
+    yes | sdkmanager --licenses > /dev/null && \
+    sdkmanager --install \
+      "platform-tools" \
+      "platforms;android-34" "build-tools;34.0.0" \
+      "platforms;android-35" "build-tools;35.0.0" \
+      > /dev/null && \
+    yes | sdkmanager --licenses > /dev/null
 
 # Isolated virtualenv for the Python server, kept off the system Python so
 # it can never collide with anything apt/sdkmanager might also touch.
@@ -71,5 +95,11 @@ RUN mkdir -p /tmp/apk-builder-jobs
 # PORT env var and expect the app to listen on it; this EXPOSE is
 # documentation for anyone running the image directly — app/config.py
 # reads $PORT itself and falls back to 8000 for plain `docker run`/local use.
+#
+# CMD must actually honor that same $PORT (shell form, so ${PORT:-8000} gets
+# expanded) rather than hardcoding --port 8000 — otherwise the app binds to
+# 8000 while the platform's health check probes whatever port it actually
+# assigned, and the deployment never leaves "starting"/"unhealthy" no matter
+# how many times the build itself succeeds.
 EXPOSE 8000
-CMD ["/opt/venv/bin/uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["/bin/sh", "-c", "exec /opt/venv/bin/uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000}"]
