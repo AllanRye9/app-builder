@@ -12,7 +12,7 @@ const jobs = new Map(); // jobId -> job record
 const bus = new EventEmitter();
 bus.setMaxListeners(0);
 
-function createJob(filename) {
+function createJob(filename, permissions) {
   const id = uuidv4();
   const dir = path.join(JOB_ROOT, id);
   const record = {
@@ -28,6 +28,13 @@ function createJob(filename) {
     projectDir: path.join(dir, 'project'),
     outputDir: path.join(dir, 'output'),
     apkPath: null,
+    // Chosen by whoever uploaded the project — never invented by the build
+    // itself. See src/permissions.js for the whitelist/sanitizer and
+    // src/buildRunner.js for where these actually get applied.
+    permissions: Array.isArray(permissions) ? permissions : [],
+    // Set once validate.js has inspected the extracted project
+    // ('capacitor-web' or 'native-android'); null until then.
+    projectType: null,
   };
   jobs.set(id, record);
   return record;

@@ -2,6 +2,7 @@ import { useCallback, useRef, useState } from 'react';
 import Dropzone from './components/Dropzone.jsx';
 import JobTicket from './components/JobTicket.jsx';
 import ToastStack from './components/ToastStack.jsx';
+import PermissionsPicker from './components/PermissionsPicker.jsx';
 import { uploadZip } from './api.js';
 
 let nextTempId = 0;
@@ -14,6 +15,9 @@ export default function App() {
   // multi-tasking dashboard is that starting build #2 never waits on #1.
   const [jobs, setJobs] = useState([]);
   const [notices, setNotices] = useState([]);
+  // Applies to whatever's uploaded next — chosen by the person building the
+  // app, never invented by the server (see components/PermissionsPicker.jsx).
+  const [permissions, setPermissions] = useState([]);
   const nextNoticeId = useRef(0);
   const notifyAsked = useRef(false);
 
@@ -65,7 +69,7 @@ export default function App() {
         ...prev,
       ]);
 
-      uploadZip(file)
+      uploadZip(file, permissions)
         .then((jobId) => patchJob(tempId, { id: jobId, status: 'validating' }))
         .catch((err) => {
           patchJob(tempId, { status: 'failed', error: err.message });
@@ -102,14 +106,17 @@ export default function App() {
 
       <header className="floor-header">
         <div className="eyebrow"><span className="dot" />apk-builder — build floor</div>
-        <h1>Turn React projects into APKs, all at once</h1>
+        <h1>Turn React, Kotlin, or Java projects into APKs, all at once</h1>
         <p className="sub">
-          Drop in as many project archives as you like. Each one runs in its own isolated,
-          disposable container with a pre-configured Android SDK — nothing runs on your machine,
-          and nothing here waits in line behind anything else.
+          Drop in as many project archives as you like — a React/Vite web project (built via
+          Capacitor) or a native Kotlin/Java Android project (built directly with its own Gradle
+          wrapper) both work. Each one runs in its own isolated, disposable container with a
+          pre-configured Android SDK — nothing runs on your machine, and nothing here waits in
+          line behind anything else.
         </p>
       </header>
 
+      <PermissionsPicker selected={permissions} onChange={setPermissions} />
       <Dropzone onFilesSelected={handleFilesSelected} />
 
       {jobs.length > 0 && (

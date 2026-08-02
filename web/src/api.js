@@ -5,9 +5,15 @@
 // to the frontend's origin.
 const API_BASE = (import.meta.env.VITE_API_BASE_URL || '').replace(/\/$/, '');
 
-export async function uploadZip(file) {
+export async function uploadZip(file, permissions = []) {
   const formData = new FormData();
   formData.append('zip', file);
+  // Permissions are the uploader's call — the server never adds any of its
+  // own (see src/buildRunner.js). An empty selection means "leave the
+  // manifest exactly as the project has it."
+  if (permissions.length > 0) {
+    formData.append('permissions', JSON.stringify(permissions));
+  }
 
   let res;
   try {

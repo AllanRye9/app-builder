@@ -9,6 +9,19 @@ const os = require('os');
 // only ever one filesystem in play.
 const JOB_ROOT = process.env.JOB_ROOT || path.join(os.tmpdir(), 'apk-builder-jobs');
 
+// Deliberately OUTSIDE JOB_ROOT (which per-job dirs live under and get
+// wiped by purgeJob/the TTL sweep) — these are shared across every job for
+// as long as the container lives, which is the entire point: without them,
+// every single build re-downloads the full Gradle distribution + every
+// Maven/npm dependency from scratch, even though back-to-back builds in the
+// same container almost always want the exact same handful of packages
+// (Capacitor core/cli/android, AndroidX, Kotlin stdlib, ...). Reusing that
+// cache is the single biggest lever on build time available here — it costs
+// disk, not correctness, since both npm and Gradle key their caches by
+// package name+version+hash already.
+const NPM_CACHE_DIR = process.env.NPM_CACHE_DIR || path.join(os.tmpdir(), 'apk-builder-cache', 'npm');
+const GRADLE_USER_HOME = process.env.GRADLE_USER_HOME_DIR || path.join(os.tmpdir(), 'apk-builder-cache', 'gradle');
+
 module.exports = {
   // Most platforms inject PORT themselves — the app must listen on
   // whatever it sets. Falls back to 3000 for local/bare `docker run` use.
@@ -34,4 +47,7 @@ module.exports = {
 
   RATE_LIMIT_MAX: parseInt(process.env.RATE_LIMIT_MAX || '10', 10),
   RATE_LIMIT_WINDOW_MS: parseInt(process.env.RATE_LIMIT_WINDOW_MS || `${10 * 60 * 1000}`, 10),
+
+  NPM_CACHE_DIR,
+  GRADLE_USER_HOME,
 };

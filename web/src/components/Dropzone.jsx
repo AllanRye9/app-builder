@@ -48,7 +48,11 @@ export default function Dropzone({ onFilesSelected }) {
         </div>
         <div className="dropzone-copy">
           <div className="dropzone-primary">Drop project archives here</div>
-          <div className="dropzone-secondary">or click to browse — one .zip per project, several at once is fine. package.json required, no android/ios folders.</div>
+          <div className="dropzone-secondary">
+            or click to browse — one .zip per project, several at once is fine. Needs a
+            package.json (web/React) or a settings.gradle + gradlew (native Kotlin/Java) at the
+            root, no android/ios folders.
+          </div>
         </div>
         <input
           ref={inputRef}

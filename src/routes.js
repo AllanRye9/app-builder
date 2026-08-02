@@ -7,6 +7,7 @@ const path = require('path');
 const { MAX_UPLOAD_BYTES, JOB_ROOT, RATE_LIMIT_MAX, RATE_LIMIT_WINDOW_MS } = require('./config');
 const { jobs, bus, createJob, log, notice, setStatus, purgeJob } = require('./jobStore');
 const { validateAndExtract, ValidationError } = require('./validate');
+const { sanitizePermissions } = require('./permissions');
 const { enqueue } = require('./buildRunner');
 
 const router = express.Router();
@@ -75,13 +76,28 @@ router.post('/upload', rateLimit, upload.single('zip'), (req, res) => {
     return res.status(400).json({ error: 'Only .zip archives are accepted.' });
   }
 
-  const job = createJob(req.file.originalname);
+  // Permissions are the uploader's call, not something the build invents —
+  // req.body.permissions is whatever the form sent (JSON array, or a plain
+  // comma list); sanitizePermissions() drops anything that isn't a real,
+  // recognized Android permission constant before it ever reaches a job.
+  const permissions = sanitizePermissions(req.body.permissions);
+
+  const job = createJob(req.file.originalname, permissions);
   setStatus(job, 'validating');
   log(job, `Received ${req.file.originalname} (${(req.file.size / 1024 / 1024).toFixed(1)} MB).`);
+  if (permissions.length > 0) {
+    log(job, `Requested permissions: ${permissions.join(', ')}`);
+  }
 
   try {
-    const { skipped } = validateAndExtract(req.file.path, job.projectDir);
-    log(job, 'Validation passed: plain React/Capacitor-ready project detected.');
+    const { skipped, projectType } = validateAndExtract(req.file.path, job.projectDir);
+    job.projectType = projectType;
+    log(
+      job,
+      projectType === 'native-android'
+        ? 'Validation passed: native Kotlin/Java Android (Gradle) project detected.'
+        : 'Validation passed: plain React/Capacitor-ready project detected.'
+    );
     if (skipped.length > 0) {
       log(job, `Skipped ${skipped.length} file(s) not needed to build the app: ${skipped.join(', ')}`);
       notice(job, {
@@ -122,6 +138,8 @@ router.get('/status/:jobId', (req, res) => {
     logs: job.logs,
     notices: job.notices,
     downloadReady: job.status === 'success' && !!job.apkPath,
+    projectType: job.projectType,
+    permissions: job.permissions,
   });
 });
 
