@@ -12,6 +12,7 @@ import os
 import re
 import shutil
 import signal
+import time
 from collections.abc import Awaitable, Callable
 from pathlib import Path
 
@@ -32,6 +33,7 @@ CAPACITOR_MAJOR = os.environ.get("CAPACITOR_MAJOR", settings.CAPACITOR_MAJOR)
 settings.NPM_CACHE_DIR.mkdir(parents=True, exist_ok=True)
 settings.GRADLE_RO_DEP_CACHE.mkdir(parents=True, exist_ok=True)
 settings.GRADLE_SHARED_BUILD_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+settings.GRADLE_DIST_CACHE_DIR.mkdir(parents=True, exist_ok=True)
 # Gradle's shared read-only dependency cache refuses to activate unless this
 # exact subdirectory already exists — otherwise every build logs "Read-only
 # cache is configured but the directory layout isn't expected" and silently
@@ -261,6 +263,21 @@ class _BuildContext:
         # across jobs.
         job_gradle_home = job.dir / "gradle-home"
         job_gradle_home.mkdir(parents=True, exist_ok=True)
+
+        # Share the wrapper's distribution cache (the actual gradle-X-bin.zip
+        # download + its unpacked contents) across every job, even though
+        # GRADLE_USER_HOME itself stays per-job. This only touches the one
+        # subdirectory that's safe to share (see GRADLE_DIST_CACHE_DIR in
+        # config.py) — daemon/, native/, etc. all stay isolated under
+        # job_gradle_home exactly as before. Symlinked once per job rather
+        # than per build() call, so this is a no-op on every command after
+        # the first for a given job.
+        wrapper_dir = job_gradle_home / "wrapper"
+        wrapper_dir.mkdir(parents=True, exist_ok=True)
+        dists_link = wrapper_dir / "dists"
+        if not dists_link.exists() and not dists_link.is_symlink():
+            dists_link.symlink_to(settings.GRADLE_DIST_CACHE_DIR, target_is_directory=True)
+
         child_env["GRADLE_USER_HOME"] = str(job_gradle_home)
         child_env["GRADLE_RO_DEP_CACHE"] = str(settings.GRADLE_RO_DEP_CACHE)
         child_env["GRADLE_SHARED_BUILD_CACHE_DIR"] = str(settings.GRADLE_SHARED_BUILD_CACHE_DIR)
@@ -315,9 +332,24 @@ class _BuildContext:
 
         self.current_process = process
         lines_captured = 0
+        last_activity_at = time.monotonic()
+
+        # A command can go quiet for a long time without actually being
+        # stuck — the clearest example is the Gradle wrapper downloading
+        # its distribution zip: it prints one "Downloading ..." line, then
+        # redraws a progress percentage using bare '\r' with no trailing
+        # '\n', which our line-based capture below can't see at all until
+        # either a real newline shows up or the stream hits EOF. Without
+        # this, that silence is indistinguishable in the job log from an
+        # actual hang. This doesn't (and can't, without reading raw
+        # unbuffered bytes) reflect true download progress — it's a
+        # liveness signal, not a progress bar — but "we're still here" is
+        # exactly the missing piece of information for a job stuck as
+        # "Downloading ..." with no output for minutes.
+        HEARTBEAT_INTERVAL_S = 20
 
         async def pipe_lines(stream: asyncio.StreamReader | None) -> None:
-            nonlocal lines_captured
+            nonlocal lines_captured, last_activity_at
             if stream is None:
                 return
             async for raw_line in stream:
@@ -328,8 +360,27 @@ class _BuildContext:
                 if line.strip():
                     log(job, line)
                     lines_captured += 1
+                last_activity_at = time.monotonic()
 
-        await asyncio.gather(pipe_lines(process.stdout), pipe_lines(process.stderr))
+        async def heartbeat() -> None:
+            while True:
+                await asyncio.sleep(HEARTBEAT_INTERVAL_S)
+                idle_s = time.monotonic() - last_activity_at
+                if idle_s >= HEARTBEAT_INTERVAL_S:
+                    log(
+                        job,
+                        f"(still running — no new output for {round(idle_s)}s; large downloads and "
+                        "slow compiles can be silent for a while, this is not necessarily stuck)",
+                    )
+
+        heartbeat_task = asyncio.create_task(heartbeat())
+        try:
+            await asyncio.gather(pipe_lines(process.stdout), pipe_lines(process.stderr))
+        finally:
+            heartbeat_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await heartbeat_task
+
         return_code = await process.wait()
         self.current_process = None
 

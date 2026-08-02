@@ -89,6 +89,26 @@ class Settings:
         )
     )
 
+    # A third, separate thing from both caches above: the Gradle wrapper's
+    # own distribution download (wrapper/dists/gradle-X-bin/.../gradle-X-
+    # bin.zip, extracted). GRADLE_RO_DEP_CACHE only covers *dependency*
+    # artifacts (modules-2) — it says nothing about the wrapper's own
+    # bootstrap zip, which lives under $GRADLE_USER_HOME/wrapper instead.
+    # Since GRADLE_USER_HOME is deliberately per-job (daemon registry
+    # isolation — see build_runner.py), without this every single build
+    # would silently re-download the *entire* Gradle distribution from
+    # services.gradle.org from scratch, even for a version this container
+    # has already built with a hundred times before. build_runner.py
+    # symlinks each job's wrapper/dists into this shared directory instead
+    # — safe to share concurrently, since Gradle's own wrapper bootstrap
+    # already uses per-distribution file locking for exactly this case.
+    GRADLE_DIST_CACHE_DIR: Path = field(
+        default_factory=lambda: Path(
+            os.environ.get("GRADLE_DIST_CACHE_DIR")
+            or Path(tempfile.gettempdir()) / "apk-builder-cache" / "gradle-wrapper-dists"
+        )
+    )
+
     # Shared, persistent cache of fully-resolved node_modules trees, keyed
     # by a hash of package-lock.json (+ a few env fingerprints) — see
     # app/dep_cache.py.
