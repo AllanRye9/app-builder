@@ -2,9 +2,8 @@ import { useCallback, useRef, useState } from 'react';
 import Dropzone from './components/Dropzone.jsx';
 import JobTicket from './components/JobTicket.jsx';
 import ToastStack from './components/ToastStack.jsx';
-import PermissionsPicker from './components/PermissionsPicker.jsx';
 import SystemStatusBar from './components/SystemStatusBar.jsx';
-import StructureGuide from './components/StructureGuide.jsx';
+import BuildInfoPanel from './components/BuildInfoPanel.jsx';
 import VisitorStats from './components/VisitorStats.jsx';
 import { uploadZip } from './api.js';
 
@@ -123,8 +122,7 @@ export default function App() {
 
       <SystemStatusBar />
 
-      <StructureGuide />
-      <PermissionsPicker selected={permissions} onChange={setPermissions} />
+      <BuildInfoPanel permissions={permissions} onPermissionsChange={setPermissions} />
       <Dropzone onFilesSelected={handleFilesSelected} />
 
       {jobs.length > 0 && (

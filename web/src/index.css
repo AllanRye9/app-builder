@@ -595,34 +595,15 @@ button { font-family: inherit; }
   .toast-stack { top: 12px; right: 12px; left: 12px; max-width: none; width: auto; }
 }
 
-/* --- Permissions picker --- */
-.permissions-picker {
-  margin: 8px 0;
-  border: 1px solid var(--line);
-  border-radius: var(--radius-sm);
-  background: var(--surface);
-}
-.permissions-toggle {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  width: 100%;
-  background: none;
-  border: none;
-  color: var(--dim);
-  font-family: var(--mono);
-  font-size: 12px;
-  cursor: pointer;
-  padding: 8px 12px;
-  text-align: left;
-}
-.permissions-toggle:hover { color: var(--paper); }
+/* --- Permissions picker (bare content — lives inside BuildInfoPanel's
+   right column, no border/toggle of its own) --- */
+.permissions-picker { min-width: 0; }
 .permissions-count {
   margin-left: auto;
   color: var(--copper);
   font-size: 11px;
+  white-space: nowrap;
 }
-.permissions-body { padding: 0 12px 12px; }
 .permissions-hint {
   color: var(--faint);
   font-size: 11.5px;
@@ -631,8 +612,8 @@ button { font-family: inherit; }
 }
 .permissions-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
-  gap: 8px 16px;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: 8px 14px;
 }
 .permissions-option {
   display: flex;
@@ -642,7 +623,7 @@ button { font-family: inherit; }
   color: var(--paper);
   cursor: pointer;
 }
-.permissions-option input { margin-top: 2px; accent-color: var(--copper); }
+.permissions-option input { margin-top: 2px; accent-color: var(--copper); flex-shrink: 0; }
 .permissions-option-hint { color: var(--faint); }
 
 /* ---------------------------------------------------------------------- */
@@ -806,15 +787,16 @@ button { font-family: inherit; }
 }
 
 /* ---------------------------------------------------------------------- */
-/* Structure guide (documentation panel)                                  */
+/* Build info panel — two columns: structure guide (left) + Android       */
+/* permissions (right), sharing one collapsible toggle                    */
 /* ---------------------------------------------------------------------- */
-.guide {
+.info-panel {
   margin: 8px 0;
   border: 1px solid var(--line);
   border-radius: var(--radius-sm);
   background: var(--surface);
 }
-.guide-toggle {
+.info-panel-toggle {
   display: flex;
   align-items: center;
   gap: 8px;
@@ -828,86 +810,93 @@ button { font-family: inherit; }
   padding: 8px 12px;
   text-align: left;
 }
-.guide-toggle:hover { color: var(--paper); }
+.info-panel-toggle:hover { color: var(--paper); }
 
-.guide-body {
-  padding: 2px 14px 14px;
+.info-panel-body {
+  display: grid;
+  grid-template-columns: 1.2fr auto 1fr;
+  gap: 14px;
+  padding: 4px 14px 14px;
   border-top: 1px solid var(--line-soft);
 }
+.info-panel-col { min-width: 0; }
+.info-panel-col-title {
+  font-family: var(--display);
+  font-weight: 600;
+  font-size: 12.5px;
+  color: var(--paper);
+  margin: 10px 0 8px;
+}
+.info-panel-rule {
+  width: 1px;
+  background: var(--line-soft);
+  align-self: stretch;
+}
 
-.guide-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
-  gap: 10px;
-  margin-top: 12px;
+@media (max-width: 720px) {
+  .info-panel-body { grid-template-columns: 1fr; }
+  .info-panel-rule { display: none; height: 1px; width: auto; margin: 4px 0; }
 }
-.guide-card {
-  border: 1px solid var(--line-soft);
-  border-radius: var(--radius-sm);
-  padding: 11px 13px;
-  background: var(--surface-2);
+
+/* --- Markdown rendering (structure guide content) --- */
+.guide-markdown {
+  max-height: 320px;
+  overflow-y: auto;
+  padding-right: 4px;
+  font-size: 12px;
+  line-height: 1.65;
+  color: var(--dim);
 }
-.guide-card-title {
-  display: flex;
-  align-items: center;
-  gap: 7px;
+.guide-markdown h2 {
   font-family: var(--display);
   font-weight: 600;
   font-size: 13px;
   color: var(--paper);
-  margin-bottom: 8px;
+  margin: 16px 0 7px;
 }
-.guide-dot { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; }
-.guide-dot-teal { background: var(--teal); box-shadow: 0 0 7px var(--teal); }
-.guide-dot-copper { background: var(--copper); box-shadow: 0 0 7px var(--copper); }
-
-.guide-list {
-  margin: 0;
+.guide-markdown h2:first-child { margin-top: 0; }
+.guide-markdown p { margin: 0 0 8px; }
+.guide-markdown ul {
+  margin: 0 0 4px;
   padding-left: 16px;
-  color: var(--dim);
-  font-size: 12px;
-  line-height: 1.65;
 }
-.guide-list li::marker { color: var(--faint); }
-.guide-list code {
+.guide-markdown li { margin-bottom: 4px; }
+.guide-markdown li::marker { color: var(--faint); }
+.guide-markdown strong { color: var(--paper); font-weight: 600; }
+.guide-markdown code {
   font-family: var(--mono);
   font-size: 11px;
   color: var(--paper);
-  background: var(--surface);
+  background: var(--surface-2);
   border: 1px solid var(--line-soft);
   border-radius: 4px;
   padding: 1px 5px;
+  white-space: nowrap;
 }
-
-.guide-row { margin-top: 14px; }
-.guide-row-label {
-  font-family: var(--mono);
-  font-size: 10.5px;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
+.guide-markdown table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 4px 0 10px;
+  font-size: 11.5px;
+}
+.guide-markdown th {
+  text-align: left;
   color: var(--faint);
-  margin-bottom: 6px;
+  font-weight: 600;
+  text-transform: uppercase;
+  font-size: 10px;
+  letter-spacing: 0.04em;
+  padding: 5px 8px;
+  border-bottom: 1px solid var(--line);
 }
-.guide-note {
-  color: var(--dim);
-  font-size: 12px;
-  line-height: 1.55;
-  margin: 0 0 8px;
+.guide-markdown td {
+  padding: 5px 8px;
+  border-bottom: 1px solid var(--line-soft);
+  vertical-align: top;
 }
-.guide-chips {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-}
-.guide-chip {
-  font-family: var(--mono);
-  font-size: 10.5px;
-  color: var(--dim);
-  background: var(--surface-2);
-  border: 1px solid var(--line-soft);
-  border-radius: 999px;
-  padding: 3px 9px;
-}
+.guide-markdown tr:last-child td { border-bottom: none; }
+
+
 
 /* ---------------------------------------------------------------------- */
 /* Visitor analytics bar (unique by IP, server-deduplicated)              */
