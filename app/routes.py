@@ -12,39 +12,17 @@ import time
 from pathlib import Path
 
 import psutil
-from fastapi import APIRouter, BackgroundTasks, Depends, Form, HTTPException, Request, UploadFile
+from fastapi import APIRouter, BackgroundTasks, Form, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 
-from . import auth
 from . import build_runner
-from . import visitors
 from .config import settings
 from .job_store import bus, create_job, jobs, log, notice, purge_job, set_status
 from .permissions import sanitize_permissions
 from .validate import ValidationError, validate_and_extract
+from . import visitors
 
 router = APIRouter()
-
-
-# ---------------------------------------------------------------------------
-# Auth — required for the actual build service (upload/status/logs/download)
-# below. EventSource (used by the log stream) can't set a custom header, so
-# the token is accepted either as a Bearer header or a ?token= query param.
-# ---------------------------------------------------------------------------
-
-
-def _bearer_token(request: Request) -> str | None:
-    header = request.headers.get("authorization") or ""
-    if header.lower().startswith("bearer "):
-        return header[7:].strip() or None
-    return request.query_params.get("token")
-
-
-async def require_user(request: Request) -> auth.User:
-    user = auth.user_for_token(_bearer_token(request))
-    if user is None:
-        raise HTTPException(status_code=401, detail="Sign in required.")
-    return user
 
 _UPLOAD_DIR = settings.JOB_ROOT / "_uploads"
 _UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
@@ -113,67 +91,6 @@ async def health() -> dict:
     return {"ok": True}
 
 
-@router.post("/auth/signup", status_code=201)
-async def auth_signup(request: Request) -> dict:
-    body = await request.json()
-    try:
-        user, token = auth.signup(str(body.get("email", "")), str(body.get("password", "")))
-    except auth.AuthError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-    return {"token": token, "email": user.email}
-
-
-@router.post("/auth/login")
-async def auth_login(request: Request) -> dict:
-    body = await request.json()
-    try:
-        user, token = auth.login(str(body.get("email", "")), str(body.get("password", "")))
-    except auth.AuthError as exc:
-        raise HTTPException(status_code=401, detail=str(exc)) from exc
-    return {"token": token, "email": user.email}
-
-
-@router.post("/auth/logout")
-async def auth_logout(request: Request, _user: auth.User = Depends(require_user)) -> dict:
-    auth.logout(_bearer_token(request))
-    return {"ok": True}
-
-
-@router.get("/auth/me")
-async def auth_me(user: auth.User = Depends(require_user)) -> dict:
-    return {"email": user.email}
-
-
-@router.post("/visitors/ping")
-async def visitors_ping(request: Request) -> dict:
-    """Called once per browser session (see web/src/lib/visitor.js) to
-    record a visit and hand back the freshly-aggregated totals in the same
-    round trip — the dashboard's animated counter needs both anyway, and
-    this avoids a second request just to read what the first one wrote.
-    """
-    body = await request.json()
-    visitor_id = str(body.get("visitorId") or "").strip()
-    if not visitor_id or len(visitor_id) > 128:
-        raise HTTPException(status_code=400, detail="Missing or invalid visitorId.")
-    country = visitors.country_from_request(request)
-    stats = visitors.record_visit(visitor_id, country)
-    return {
-        "total": stats.total,
-        "today": stats.today,
-        "countries": stats.countries,
-    }
-
-
-@router.get("/visitors")
-async def visitors_stats() -> dict:
-    stats = visitors.get_stats()
-    return {
-        "total": stats.total,
-        "today": stats.today,
-        "countries": stats.countries,
-    }
-
-
 @router.get("/system")
 async def system_status() -> dict:
     """Powers the dashboard's global status bar — a standardized,
@@ -220,12 +137,30 @@ async def _save_upload(file: UploadFile, dest_path: Path) -> int:
     return size
 
 
-@router.post("/upload", status_code=202)
+@router.post("/visitors/ping")
+async def visitors_ping(request: Request) -> dict:
+    """Called once per dashboard load (see web/src/api.js). Records this
+    visitor if their IP hasn't been seen before (or refreshes their
+    "last seen" date if it has) and returns the current totals in the
+    same round trip.
+    """
+    return await visitors.record_visit(request)
+
+
+@router.get("/visitors/stats")
+async def visitors_stats() -> dict:
+    """Read-only refresh for the standing counter in the UI — does not
+    itself count as a visit.
+    """
+    return await visitors.get_stats()
+
+
+
+@router.post("/upload")
 async def upload(
     request: Request,
     zip: UploadFile | None = None,
     permissions: str | None = Form(default=None),
-    _user: auth.User = Depends(require_user),
 ) -> JSONResponse:
     _check_rate_limit(request)
 
@@ -295,7 +230,7 @@ async def upload(
 
 
 @router.get("/status/{job_id}")
-async def get_status(job_id: str, _user: auth.User = Depends(require_user)) -> dict:
+async def get_status(job_id: str) -> dict:
     job = jobs.get(job_id)
     if job is None:
         raise HTTPException(status_code=404, detail="Unknown job id.")
@@ -321,7 +256,7 @@ def _sse(event: str | None, data: object) -> str:
 
 
 @router.get("/logs/{job_id}/stream")
-async def stream_logs(job_id: str, request: Request, _user: auth.User = Depends(require_user)) -> StreamingResponse:
+async def stream_logs(job_id: str, request: Request) -> StreamingResponse:
     job = jobs.get(job_id)
     if job is None:
         raise HTTPException(status_code=404)
@@ -375,7 +310,7 @@ async def stream_logs(job_id: str, request: Request, _user: auth.User = Depends(
 
 
 @router.get("/download/{job_id}")
-async def download(job_id: str, background_tasks: BackgroundTasks, _user: auth.User = Depends(require_user)):
+async def download(job_id: str, background_tasks: BackgroundTasks):
     job = jobs.get(job_id)
     if job is None:
         raise HTTPException(status_code=404, detail="Unknown job id.")

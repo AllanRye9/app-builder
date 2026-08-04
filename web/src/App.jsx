@@ -1,47 +1,18 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useRef, useState } from 'react';
 import Dropzone from './components/Dropzone.jsx';
 import JobTicket from './components/JobTicket.jsx';
 import ToastStack from './components/ToastStack.jsx';
-import PermissionsConfirmModal from './components/PermissionsConfirmModal.jsx';
 import SystemStatusBar from './components/SystemStatusBar.jsx';
-import Documentation from './components/Documentation.jsx';
-import ThemeSwitcher from './components/ThemeSwitcher.jsx';
+import StructureGuide from './components/StructureGuide.jsx';
+import PermissionsPicker from './components/PermissionsPicker.jsx';
+import SidePanel from './components/SidePanel.jsx';
 import VisitorStats from './components/VisitorStats.jsx';
-import XPBar from './components/XPBar.jsx';
-import Confetti from './components/Confetti.jsx';
-import AuthGate from './components/AuthGate.jsx';
-import { uploadZip, logout as apiLogout } from './api.js';
-import { getToken, getStoredEmail, setAuth, clearAuth } from './lib/auth.js';
-import { getStoredTheme, applyTheme } from './lib/theme.js';
-import { getProgress, recordUpload, recordBuildResult, recordDocsView, recordStructureView, levelForXp, BADGES } from './lib/gamification.js';
+import BrandMark from './components/BrandMark.jsx';
+import { uploadZip } from './api.js';
 
 let nextTempId = 0;
 
 export default function App() {
-  const [authToken, setAuthToken] = useState(getToken);
-  const [authEmail, setAuthEmail] = useState(getStoredEmail);
-
-  function handleAuthenticated(token, email) {
-    setAuth(token, email);
-    setAuthToken(token);
-    setAuthEmail(email);
-  }
-
-  function handleLogout() {
-    apiLogout();
-    clearAuth();
-    setAuthToken('');
-    setAuthEmail('');
-  }
-
-  if (!authToken) {
-    return <AuthGate onAuthenticated={handleAuthenticated} />;
-  }
-
-  return <BuildFloor authEmail={authEmail} onLogout={handleLogout} />;
-}
-
-function BuildFloor({ authEmail, onLogout }) {
   // Each entry: { tempId, id, fileName, fileSize, status, error, queuePosition, downloadReady }
   // tempId exists from the moment a file is picked (client-side, before the
   // server has assigned a real job id) so the card can appear instantly
@@ -50,23 +21,10 @@ function BuildFloor({ authEmail, onLogout }) {
   const [jobs, setJobs] = useState([]);
   const [notices, setNotices] = useState([]);
   // Applies to whatever's uploaded next — chosen by the person building the
-  // app, never invented by the server (see components/PermissionsConfirmModal.jsx).
+  // app, never invented by the server (see components/PermissionsPicker.jsx).
   const [permissions, setPermissions] = useState([]);
-  const [docsOpen, setDocsOpen] = useState(false);
-  const [theme, setTheme] = useState(getStoredTheme);
-  const [progress, setProgress] = useState(getProgress);
-  const [confettiKey, setConfettiKey] = useState(0);
-  const confettiTimer = useRef(null);
   const nextNoticeId = useRef(0);
   const notifyAsked = useRef(false);
-  // Files sit here from the moment they're picked/dropped until the
-  // permissions popup is confirmed — nothing is sent to the server and no
-  // build starts before that confirmation.
-  const [pendingFiles, setPendingFiles] = useState(null);
-
-  useEffect(() => {
-    applyTheme(theme);
-  }, [theme]);
 
   const pushToast = useCallback((payload) => {
     nextNoticeId.current += 1;
@@ -76,41 +34,6 @@ function BuildFloor({ authEmail, onLogout }) {
   const dismissToast = useCallback((id) => {
     setNotices((prev) => prev.filter((n) => n.id !== id));
   }, []);
-
-  const celebrate = useCallback(() => {
-    setConfettiKey((k) => k + 1);
-    clearTimeout(confettiTimer.current);
-    confettiTimer.current = setTimeout(() => setConfettiKey(0), 1700);
-  }, []);
-
-  // Applies the result of any gamification event: updates the XP bar,
-  // and — only when something actually changed — surfaces a toast and a
-  // confetti burst so leveling up or a new badge feels like an event, not
-  // a silent number change buried in a collapsed panel.
-  const applyGameResult = useCallback((result) => {
-    if (!result) return;
-    setProgress(result.state);
-    if (result.leveledUp) {
-      pushToast({
-        level: 'success',
-        title: `Level up! Now level ${levelForXp(result.state.xp)}`,
-        message: 'Check the XP bar for your progress and badges.',
-      });
-      celebrate();
-    }
-    result.newBadges.forEach((id) => {
-      const badge = BADGES.find((b) => b.id === id);
-      if (badge) {
-        pushToast({ level: 'success', title: `Badge unlocked: ${badge.label}`, message: badge.desc });
-        celebrate();
-      }
-    });
-  }, [pushToast, celebrate]);
-
-  function openDocs() {
-    setDocsOpen(true);
-    applyGameResult(recordDocsView());
-  }
 
   function patchJob(tempId, patch) {
     setJobs((prev) => prev.map((j) => (j.tempId === tempId ? { ...j, ...patch } : j)));
@@ -133,25 +56,7 @@ function BuildFloor({ authEmail, onLogout }) {
     }
   }
 
-  // Called the instant files are picked/dropped — opens the permissions
-  // popup instead of uploading right away.
-  function handleFilesPicked(files) {
-    setPendingFiles(files);
-  }
-
-  function cancelPendingFiles() {
-    setPendingFiles(null);
-  }
-
-  // Called only once the popup's Confirm button is pressed — this is what
-  // actually starts the upload/build for the pending batch.
-  function confirmPendingFiles() {
-    const files = pendingFiles;
-    setPendingFiles(null);
-    if (files && files.length > 0) startUploads(files);
-  }
-
-  function startUploads(files) {
+  function handleFilesSelected(files) {
     ensureNotifyPermission();
     files.forEach((file) => {
       const tempId = `t${nextTempId++}`;
@@ -166,11 +71,9 @@ function BuildFloor({ authEmail, onLogout }) {
           error: null,
           queuePosition: null,
           downloadReady: false,
-          projectType: null,
         },
         ...prev,
       ]);
-      applyGameResult(recordUpload());
 
       uploadZip(file, permissions)
         .then((jobId) => patchJob(tempId, { id: jobId, status: 'validating' }))
@@ -181,17 +84,19 @@ function BuildFloor({ authEmail, onLogout }) {
     });
   }
 
-  function handleJobDone(tempId, fileName, status, error, projectType) {
+  function handleRejectedFile(message) {
+    pushToast({ level: 'warning', title: 'Not accepted', message });
+  }
+
+  function handleJobDone(tempId, fileName, status, error) {
     if (status === 'success') {
       pushToast({ level: 'success', title: 'Build complete', message: `${fileName} is ready to download.` });
       notifyBrowser('Build complete', `${fileName} is ready to download.`);
-      celebrate();
     } else {
       const message = error || `${fileName} failed to build.`;
       pushToast({ level: 'error', title: 'Build failed', message });
       notifyBrowser('Build failed', message);
     }
-    applyGameResult(recordBuildResult(status, projectType));
   }
 
   const counts = jobs.reduce(
@@ -206,111 +111,84 @@ function BuildFloor({ authEmail, onLogout }) {
   );
 
   return (
-    <div className="app-shell">
-      <ToastStack notices={notices} onDismiss={dismissToast} />
-      {confettiKey > 0 && <Confetti key={confettiKey} />}
+    <div className="app-frame">
+      <div className="app-layout">
+        <ToastStack notices={notices} onDismiss={dismissToast} />
 
-      <aside className="app-sidebar" aria-label="Status and controls">
-        <div className="sidebar-section">
-          <div className="eyebrow"><span className="dot" />apk-builder</div>
-          <div className="sidebar-tag">build floor</div>
-        </div>
+        <aside className="side-panel side-panel-left hide-scrollbar" aria-label="Project structure guide">
+          <SidePanel title="Project structure guide">
+            <StructureGuide />
+          </SidePanel>
+        </aside>
 
-        <div className="sidebar-section sidebar-controls">
-          <ThemeSwitcher theme={theme} onChange={setTheme} />
-          <button type="button" className="docs-link" onClick={openDocs}>
-            <span aria-hidden="true">📄</span> File structure docs
-          </button>
-        </div>
+        <div className="center-scroll hide-scrollbar">
+          <main className="app-shell">
+            <header className="floor-header">
+              <div className="eyebrow"><BrandMark />apkit<span className="eyebrow-sep">·</span>build floor</div>
+              <h1>Turn React, Kotlin, or Java projects into APKs, all at once</h1>
+              <p className="sub">
+                Drop in a React/Vite web project (built via Capacitor) or a native Kotlin/Java
+                Android project (built directly with its own Gradle wrapper) — each runs in its
+                own isolated, disposable container with a pre-configured Android SDK.
+              </p>
+              <VisitorStats />
+            </header>
 
-        <div className="sidebar-section sidebar-account">
-          <span className="sidebar-account-email" title={authEmail}>{authEmail}</span>
-          <button type="button" className="logout-link" onClick={onLogout}>Log out</button>
-        </div>
+            <SystemStatusBar />
 
-        <div className="sidebar-section">
-          <div className="sidebar-heading">Your progress</div>
-          <XPBar progress={progress} />
-        </div>
+            <Dropzone onFilesSelected={handleFilesSelected} onReject={handleRejectedFile} />
 
-        <div className="sidebar-section">
-          <div className="sidebar-heading">Build capacity</div>
-          <SystemStatusBar />
-        </div>
-
-        <div className="sidebar-section">
-          <div className="sidebar-heading">Community</div>
-          <VisitorStats />
-        </div>
-      </aside>
-
-      <main className="app-main">
-        <header className="floor-header">
-          <h1>Turn React, Kotlin, or Java projects into APKs, all at once</h1>
-          <p className="sub">
-            Drop in as many project archives as you like — a React/Vite web project (Capacitor) or a
-            native Kotlin/Java Android project both work, each in its own disposable container.{' '}
-            <button type="button" className="inline-link" onClick={openDocs}>
-              See the required layout →
-            </button>
-          </p>
-        </header>
-
-        <Documentation open={docsOpen} onClose={() => setDocsOpen(false)} />
-
-        <Dropzone onFilesSelected={handleFilesPicked} />
-
-        <PermissionsConfirmModal
-          open={pendingFiles !== null}
-          files={pendingFiles || []}
-          selected={permissions}
-          onChange={setPermissions}
-          onCancel={cancelPendingFiles}
-          onConfirm={confirmPendingFiles}
-        />
-
-        {jobs.length > 0 && (
-          <div className="stats-bar" aria-label="Build floor summary">
-            <Stat value={counts.building} label="building" tone="active" />
-            <Stat value={counts.queued} label="waiting" tone="queued" />
-            <Stat value={counts.done} label="done" tone="done" />
-            {counts.failed > 0 && <Stat value={counts.failed} label="failed" tone="failed" />}
-          </div>
-        )}
-
-        <div className="ticket-list">
-          {jobs.length === 0 ? (
-            <div className="empty-floor">
-              <div className="empty-floor-glyph" aria-hidden="true">
-                <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-                  <rect x="3.5" y="5.5" width="17" height="13" rx="1.5" stroke="currentColor" strokeWidth="1.4" />
-                  <path d="M3.5 9.5h17" stroke="currentColor" strokeWidth="1.4" />
-                  <path d="M7 7.2h.01M9.4 7.2h.01" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
-                </svg>
+            {jobs.length > 0 && (
+              <div className="stats-bar" aria-label="Build floor summary">
+                <Stat value={counts.building} label="building" tone="active" />
+                <Stat value={counts.queued} label="waiting" tone="queued" />
+                <Stat value={counts.done} label="done" tone="done" />
+                {counts.failed > 0 && <Stat value={counts.failed} label="failed" tone="failed" />}
               </div>
-              <div className="empty-floor-title">The floor is empty</div>
-              <div className="empty-floor-sub">Drop a project above to start your first build.</div>
+            )}
+
+            <div className="ticket-list hide-scrollbar">
+              {jobs.length === 0 ? (
+                <div className="empty-floor">
+                  <div className="empty-floor-glyph" aria-hidden="true">
+                    <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                      <rect x="3.5" y="5.5" width="17" height="13" rx="1.5" stroke="currentColor" strokeWidth="1.4" />
+                      <path d="M3.5 9.5h17" stroke="currentColor" strokeWidth="1.4" />
+                      <path d="M7 7.2h.01M9.4 7.2h.01" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
+                    </svg>
+                  </div>
+                  <div className="empty-floor-title">The floor is empty</div>
+                  <div className="empty-floor-sub">Drop a project above to start your first build.</div>
+                </div>
+              ) : (
+                jobs.map((job) => (
+                  <JobTicket
+                    key={job.tempId}
+                    job={job}
+                    onUpdate={(patch) => patchJob(job.tempId, patch)}
+                    onDone={(status, error) => handleJobDone(job.tempId, job.fileName, status, error)}
+                    onNotice={pushToast}
+                    onRemove={() => removeJob(job.tempId)}
+                  />
+                ))
+              )}
             </div>
-          ) : (
-            jobs.map((job) => (
-              <JobTicket
-                key={job.tempId}
-                job={job}
-                onUpdate={(patch) => patchJob(job.tempId, patch)}
-                onDone={(status, error) => handleJobDone(job.tempId, job.fileName, status, error, job.projectType)}
-                onNotice={pushToast}
-                onRemove={() => removeJob(job.tempId)}
-                onStructureExpand={() => applyGameResult(recordStructureView())}
-              />
-            ))
-          )}
+
+            <footer className="app-footer">
+              Builds run with capped CPU/memory in ephemeral containers, destroyed after each job.
+            </footer>
+          </main>
         </div>
 
-        <footer className="app-footer">
-          Builds run with capped CPU/memory in ephemeral containers, destroyed after each job. ·{' '}
-          <button type="button" className="inline-link" onClick={openDocs}>File structure docs</button>
-        </footer>
-      </main>
+        <aside className="side-panel side-panel-right hide-scrollbar" aria-label="Android permissions">
+          <SidePanel
+            title="Android permissions"
+            subtitle={permissions.length > 0 ? `${permissions.length} selected` : null}
+          >
+            <PermissionsPicker selected={permissions} onChange={setPermissions} />
+          </SidePanel>
+        </aside>
+      </div>
     </div>
   );
 }

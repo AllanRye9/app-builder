@@ -1,99 +1,163 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
+import { inspectZip } from '../lib/zipTree.js';
 
-// Depth 0 (project root contents) opens automatically so the overview is
-// visible immediately; anything nested past that stays collapsed until
-// clicked, which is what keeps a big project from turning into a wall of
-// rows the moment the archive is read.
-const AUTO_OPEN_DEPTH = 1;
+// How many rows get a staggered entrance delay before the rest just appear
+// together — keeps a 900-file project from taking nine seconds to finish
+// animating in.
+const MAX_STAGGERED = 60;
+const STAGGER_MS = 14;
 
-export default function FileTree({ nodes, depth = 0 }) {
+export default function FileTree({ file }) {
+  const [state, setState] = useState('inspecting'); // inspecting | ready | error
+  const [result, setResult] = useState(null);
+  const [collapsed, setCollapsed] = useState(false);
+  const cancelled = useRef(false);
+
+  useEffect(() => {
+    cancelled.current = false;
+    setState('inspecting');
+    setResult(null);
+    inspectZip(file)
+      .then((r) => {
+        if (cancelled.current) return;
+        setResult(r);
+        setState('ready');
+      })
+      .catch(() => {
+        if (cancelled.current) return;
+        setState('error');
+      });
+    return () => {
+      cancelled.current = true;
+    };
+  }, [file]);
+
+  if (state === 'error') return null; // the real validation error still surfaces via the build log
+
   return (
-    <ul className="ft-list" role="tree">
-      {nodes.map((node, i) => (
-        <FileTreeNode key={node.path} node={node} depth={depth} index={i} />
-      ))}
-    </ul>
-  );
-}
-
-function FileTreeNode({ node, depth, index }) {
-  const isDir = node.type === 'dir';
-  const [open, setOpen] = useState(isDir && depth < AUTO_OPEN_DEPTH);
-
-  return (
-    <li
-      className="ft-row"
-      style={{ '--i': index }}
-      role="treeitem"
-      aria-expanded={isDir ? open : undefined}
-    >
-      <div
-        className={`ft-line${node.flagged ? ' ft-flagged' : ''}${node.marker === 'entry' ? ' ft-entry' : ''}`}
-        style={{ paddingLeft: `${depth * 16 + 6}px` }}
-        onClick={() => isDir && setOpen((o) => !o)}
-        role={isDir ? 'button' : undefined}
-        tabIndex={isDir ? 0 : undefined}
-        onKeyDown={(e) => {
-          if (isDir && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); setOpen((o) => !o); }
-        }}
+    <div className="filetree">
+      <button
+        type="button"
+        className="filetree-toggle"
+        onClick={() => setCollapsed((c) => !c)}
+        aria-expanded={!collapsed}
       >
-        {isDir ? (
-          <span className={`ft-caret${open ? ' open' : ''}`} aria-hidden="true">▸</span>
-        ) : (
-          <span className="ft-caret ft-caret-spacer" aria-hidden="true" />
+        <span className={`log-toggle-caret${!collapsed ? ' open' : ''}`} aria-hidden="true">▸</span>
+        {state === 'inspecting' ? 'Reading archive…' : 'Archive contents'}
+        {result && (
+          <span className="filetree-count">
+            {result.fileCount} file{result.fileCount === 1 ? '' : 's'}
+            {result.dirCount > 0 ? ` · ${result.dirCount} folder${result.dirCount === 1 ? '' : 's'}` : ''}
+          </span>
         )}
-        <span className="ft-glyph" aria-hidden="true">
-          {isDir ? <FolderGlyph open={open} /> : <FileGlyph name={node.name} />}
-        </span>
-        <span className="ft-name">{node.name}</span>
-        {node.marker === 'entry' && <span className="ft-badge ft-badge-entry">project root</span>}
-        {node.marker === 'skipped' && <span className="ft-badge ft-badge-skip">ignored on upload</span>}
-        {node.flagged && <span className="ft-badge ft-badge-flag">not allowed</span>}
-      </div>
+      </button>
 
-      {isDir && node.children.length > 0 && (
-        <div className={`ft-children-wrap${open ? ' open' : ''}`}>
-          <div className="ft-children">
-            <FileTree nodes={node.children} depth={depth + 1} />
-          </div>
+      {!collapsed && (
+        <div className="filetree-body">
+          {state === 'inspecting' && (
+            <div className="filetree-scanning">
+              <span className="filetree-scanning-bar" />
+              Unpacking and reading entries…
+            </div>
+          )}
+
+          {state === 'ready' && result && (
+            <>
+              <Summary result={result} />
+              <div className="filetree-tree" role="tree">
+                {result.tree.map((node, i) => (
+                  <Node key={node.path} node={node} index={{ n: i }} />
+                ))}
+              </div>
+              {result.truncated && (
+                <div className="filetree-truncated">Showing a partial listing — the archive has more entries than fit here.</div>
+              )}
+            </>
+          )}
         </div>
       )}
-    </li>
+    </div>
   );
 }
 
-function FolderGlyph({ open }) {
+function Summary({ result }) {
+  if (result.forbiddenAtRoot.length > 0) {
+    return (
+      <div className="filetree-summary filetree-summary-bad">
+        Contains {result.forbiddenAtRoot.map((n) => `"${n}/"`).join(', ')} at the root — this is generated by the
+        build and will be rejected. Remove it and re-zip.
+      </div>
+    );
+  }
+  if (result.projectType === 'capacitor-web') {
+    return <div className="filetree-summary filetree-summary-good">package.json found at root → will build as a web/Capacitor project.</div>;
+  }
+  if (result.projectType === 'native-android') {
+    return <div className="filetree-summary filetree-summary-good">settings.gradle found at root → will build as a native Android project.</div>;
+  }
   return (
-    <svg viewBox="0 0 16 16" fill="none" aria-hidden="true">
-      {open ? (
-        <path d="M1.5 4.5h4l1.2 1.4H14a.5.5 0 0 1 .49.6l-.9 6a.5.5 0 0 1-.49.4H2.4a.5.5 0 0 1-.5-.43L1 5a.5.5 0 0 1 .5-.57Z" stroke="currentColor" strokeWidth="1.1" strokeLinejoin="round" />
-      ) : (
-        <path d="M1.5 3.5h4l1.3 1.5H14a.5.5 0 0 1 .5.5v7a.5.5 0 0 1-.5.5H1.5a.5.5 0 0 1-.5-.5v-8.5a.5.5 0 0 1 .5-.5Z" stroke="currentColor" strokeWidth="1.1" strokeLinejoin="round" />
+    <div className="filetree-summary filetree-summary-warn">
+      No package.json or settings.gradle spotted at the root yet — the server will reject this unless one of
+      those is present (see the structure guide above).
+    </div>
+  );
+}
+
+function Node({ node, index }) {
+  const delay = Math.min(index.n, MAX_STAGGERED) * STAGGER_MS;
+  index.n += 1;
+
+  return (
+    <div className="filetree-node" style={{ '--delay': `${delay}ms` }}>
+      <div className={`filetree-row filetree-row-${node.type}${node.flag ? ` flag-${node.flag}` : ''}`}>
+        <span className="filetree-icon" aria-hidden="true">
+          <NodeIcon node={node} />
+        </span>
+        <span className="filetree-name">{node.name}{node.type === 'dir' ? '/' : ''}</span>
+        {node.flag === 'marker' && <span className="filetree-badge filetree-badge-good">root marker</span>}
+        {node.flag === 'wrapper' && <span className="filetree-badge filetree-badge-good">gradle wrapper</span>}
+        {node.flag === 'forbidden' && <span className="filetree-badge filetree-badge-bad">not allowed</span>}
+      </div>
+      {node.children && node.children.length > 0 && (
+        <div className="filetree-children">
+          {node.children.map((child) => (
+            <Node key={child.path} node={child} index={index} />
+          ))}
+        </div>
       )}
-    </svg>
+    </div>
   );
 }
 
-const EXT_COLOR = {
-  json: 'var(--copper)',
-  gradle: 'var(--copper)',
-  kts: 'var(--copper)',
-  kt: 'var(--violet)',
-  java: 'var(--violet)',
-  xml: 'var(--violet)',
-  js: 'var(--teal)',
-  jsx: 'var(--teal)',
-  ts: 'var(--teal)',
-  tsx: 'var(--teal)',
-};
+const CODE_EXT = new Set(['.js', '.jsx', '.ts', '.tsx', '.mjs', '.cjs', '.kt', '.kts', '.java']);
+const CONFIG_EXT = new Set(['.json', '.yml', '.yaml', '.gradle', '.properties', '.lock', '.xml']);
+const STYLE_EXT = new Set(['.css', '.scss', '.sass', '.less']);
+const IMAGE_EXT = new Set(['.png', '.jpg', '.jpeg', '.gif', '.webp', '.ico', '.svg']);
+const DOC_EXT = new Set(['.md', '.txt']);
 
-function FileGlyph({ name }) {
-  const ext = name.includes('.') ? name.slice(name.lastIndexOf('.') + 1).toLowerCase() : '';
-  const color = EXT_COLOR[ext] || 'var(--faint)';
+function NodeIcon({ node }) {
+  if (node.type === 'dir') {
+    return (
+      <svg viewBox="0 0 16 16" fill="none">
+        <path d="M1.5 4.2c0-.6.5-1.1 1.1-1.1h3.4l1.2 1.4h6.2c.6 0 1.1.5 1.1 1.1v7.2c0 .6-.5 1.1-1.1 1.1H2.6c-.6 0-1.1-.5-1.1-1.1V4.2Z" stroke="currentColor" strokeWidth="1.2" strokeLinejoin="round" />
+      </svg>
+    );
+  }
+  const dotIndex = node.name.lastIndexOf('.');
+  const ext = dotIndex === -1 ? '' : node.name.slice(dotIndex).toLowerCase();
+  let d = 'M4 1.5h5.5L12.5 4.5V14.5h-8.5V1.5Z';
+  let extra = null;
+  if (CODE_EXT.has(ext)) extra = <path d="M6 8.2 4.5 9.7 6 11.2M10 8.2l1.5 1.5L10 11.2" stroke="currentColor" strokeWidth="1" strokeLinecap="round" strokeLinejoin="round" />;
+  else if (STYLE_EXT.has(ext)) extra = <path d="M5 8.5h6M5 10.8h4" stroke="currentColor" strokeWidth="1" strokeLinecap="round" />;
+  else if (IMAGE_EXT.has(ext)) extra = <path d="M5.2 10.5 7 8.3l1.4 1.6 1.1-1.3L11 10.5" stroke="currentColor" strokeWidth="1" strokeLinecap="round" strokeLinejoin="round" />;
+  else if (CONFIG_EXT.has(ext)) extra = <circle cx="8" cy="9.7" r="1.3" stroke="currentColor" strokeWidth="1" />;
+  else if (DOC_EXT.has(ext)) extra = <path d="M5.2 8.3h5.6M5.2 10h5.6M5.2 11.7h3.4" stroke="currentColor" strokeWidth="1" strokeLinecap="round" />;
+
   return (
-    <svg viewBox="0 0 16 16" fill="none" aria-hidden="true" style={{ color }}>
-      <path d="M3.5 1.5h6l3 3v10a.5.5 0 0 1-.5.5h-8.5a.5.5 0 0 1-.5-.5v-12.5a.5.5 0 0 1 .5-.5Z" stroke="currentColor" strokeWidth="1.1" strokeLinejoin="round" />
-      <path d="M9.5 1.5v3h3" stroke="currentColor" strokeWidth="1.1" strokeLinejoin="round" />
+    <svg viewBox="0 0 16 16" fill="none">
+      <path d={d} stroke="currentColor" strokeWidth="1.2" strokeLinejoin="round" />
+      <path d="M9.5 1.5V4.5H12.5" stroke="currentColor" strokeWidth="1.2" strokeLinejoin="round" />
+      {extra}
     </svg>
   );
 }
