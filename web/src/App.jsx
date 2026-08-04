@@ -206,93 +206,112 @@ function BuildFloor({ authEmail, onLogout }) {
   );
 
   return (
-    <main className="app-shell">
+    <div className="app-shell">
       <ToastStack notices={notices} onDismiss={dismissToast} />
       {confettiKey > 0 && <Confetti key={confettiKey} />}
 
-      <header className="floor-header">
-        <div className="eyebrow-row">
-          <div className="eyebrow"><span className="dot" />apk-builder — build floor</div>
-          <div className="header-controls">
-            <ThemeSwitcher theme={theme} onChange={setTheme} />
-            <button type="button" className="docs-link" onClick={openDocs}>
-              <span aria-hidden="true">📄</span> File structure docs
-            </button>
-            {authEmail && <span className="ticket-size" title={authEmail}>{authEmail}</span>}
-            <button type="button" className="logout-link" onClick={onLogout}>Log out</button>
-          </div>
+      <aside className="app-sidebar" aria-label="Status and controls">
+        <div className="sidebar-section">
+          <div className="eyebrow"><span className="dot" />apk-builder</div>
+          <div className="sidebar-tag">build floor</div>
         </div>
-        <h1>Turn React, Kotlin, or Java projects into APKs, all at once</h1>
-        <p className="sub">
-          Drop in as many project archives as you like — a React/Vite web project (Capacitor) or a
-          native Kotlin/Java Android project both work, each in its own disposable container.{' '}
-          <button type="button" className="inline-link" onClick={openDocs}>
-            See the required layout →
+
+        <div className="sidebar-section sidebar-controls">
+          <ThemeSwitcher theme={theme} onChange={setTheme} />
+          <button type="button" className="docs-link" onClick={openDocs}>
+            <span aria-hidden="true">📄</span> File structure docs
           </button>
-        </p>
-
-        <VisitorStats />
-      </header>
-
-      <Documentation open={docsOpen} onClose={() => setDocsOpen(false)} />
-
-      <XPBar progress={progress} />
-
-      <SystemStatusBar />
-
-      <Dropzone onFilesSelected={handleFilesPicked} />
-
-      <PermissionsConfirmModal
-        open={pendingFiles !== null}
-        files={pendingFiles || []}
-        selected={permissions}
-        onChange={setPermissions}
-        onCancel={cancelPendingFiles}
-        onConfirm={confirmPendingFiles}
-      />
-
-      {jobs.length > 0 && (
-        <div className="stats-bar" aria-label="Build floor summary">
-          <Stat value={counts.building} label="building" tone="active" />
-          <Stat value={counts.queued} label="waiting" tone="queued" />
-          <Stat value={counts.done} label="done" tone="done" />
-          {counts.failed > 0 && <Stat value={counts.failed} label="failed" tone="failed" />}
         </div>
-      )}
 
-      <div className="ticket-list">
-        {jobs.length === 0 ? (
-          <div className="empty-floor">
-            <div className="empty-floor-glyph" aria-hidden="true">
-              <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-                <rect x="3.5" y="5.5" width="17" height="13" rx="1.5" stroke="currentColor" strokeWidth="1.4" />
-                <path d="M3.5 9.5h17" stroke="currentColor" strokeWidth="1.4" />
-                <path d="M7 7.2h.01M9.4 7.2h.01" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
-              </svg>
-            </div>
-            <div className="empty-floor-title">The floor is empty</div>
-            <div className="empty-floor-sub">Drop a project above to start your first build.</div>
+        <div className="sidebar-section sidebar-account">
+          <span className="sidebar-account-email" title={authEmail}>{authEmail}</span>
+          <button type="button" className="logout-link" onClick={onLogout}>Log out</button>
+        </div>
+
+        <div className="sidebar-section">
+          <div className="sidebar-heading">Your progress</div>
+          <XPBar progress={progress} />
+        </div>
+
+        <div className="sidebar-section">
+          <div className="sidebar-heading">Build capacity</div>
+          <SystemStatusBar />
+        </div>
+
+        <div className="sidebar-section">
+          <div className="sidebar-heading">Community</div>
+          <VisitorStats />
+        </div>
+      </aside>
+
+      <main className="app-main">
+        <header className="floor-header">
+          <h1>Turn React, Kotlin, or Java projects into APKs, all at once</h1>
+          <p className="sub">
+            Drop in as many project archives as you like — a React/Vite web project (Capacitor) or a
+            native Kotlin/Java Android project both work, each in its own disposable container.{' '}
+            <button type="button" className="inline-link" onClick={openDocs}>
+              See the required layout →
+            </button>
+          </p>
+        </header>
+
+        <Documentation open={docsOpen} onClose={() => setDocsOpen(false)} />
+
+        <Dropzone onFilesSelected={handleFilesPicked} />
+
+        <PermissionsConfirmModal
+          open={pendingFiles !== null}
+          files={pendingFiles || []}
+          selected={permissions}
+          onChange={setPermissions}
+          onCancel={cancelPendingFiles}
+          onConfirm={confirmPendingFiles}
+        />
+
+        {jobs.length > 0 && (
+          <div className="stats-bar" aria-label="Build floor summary">
+            <Stat value={counts.building} label="building" tone="active" />
+            <Stat value={counts.queued} label="waiting" tone="queued" />
+            <Stat value={counts.done} label="done" tone="done" />
+            {counts.failed > 0 && <Stat value={counts.failed} label="failed" tone="failed" />}
           </div>
-        ) : (
-          jobs.map((job) => (
-            <JobTicket
-              key={job.tempId}
-              job={job}
-              onUpdate={(patch) => patchJob(job.tempId, patch)}
-              onDone={(status, error) => handleJobDone(job.tempId, job.fileName, status, error, job.projectType)}
-              onNotice={pushToast}
-              onRemove={() => removeJob(job.tempId)}
-              onStructureExpand={() => applyGameResult(recordStructureView())}
-            />
-          ))
         )}
-      </div>
 
-      <footer className="app-footer">
-        Builds run with capped CPU/memory in ephemeral containers, destroyed after each job. ·{' '}
-        <button type="button" className="inline-link" onClick={openDocs}>File structure docs</button>
-      </footer>
-    </main>
+        <div className="ticket-list">
+          {jobs.length === 0 ? (
+            <div className="empty-floor">
+              <div className="empty-floor-glyph" aria-hidden="true">
+                <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                  <rect x="3.5" y="5.5" width="17" height="13" rx="1.5" stroke="currentColor" strokeWidth="1.4" />
+                  <path d="M3.5 9.5h17" stroke="currentColor" strokeWidth="1.4" />
+                  <path d="M7 7.2h.01M9.4 7.2h.01" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
+                </svg>
+              </div>
+              <div className="empty-floor-title">The floor is empty</div>
+              <div className="empty-floor-sub">Drop a project above to start your first build.</div>
+            </div>
+          ) : (
+            jobs.map((job) => (
+              <JobTicket
+                key={job.tempId}
+                job={job}
+                onUpdate={(patch) => patchJob(job.tempId, patch)}
+                onDone={(status, error) => handleJobDone(job.tempId, job.fileName, status, error, job.projectType)}
+                onNotice={pushToast}
+                onRemove={() => removeJob(job.tempId)}
+                onStructureExpand={() => applyGameResult(recordStructureView())}
+              />
+            ))
+          )}
+        </div>
+
+        <footer className="app-footer">
+          Builds run with capped CPU/memory in ephemeral containers, destroyed after each job. ·{' '}
+          <button type="button" className="inline-link" onClick={openDocs}>File structure docs</button>
+        </footer>
+      </main>
+    </div>
   );
 }
 

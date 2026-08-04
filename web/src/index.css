@@ -110,13 +110,17 @@ body {
 button { font-family: inherit; }
 
 /* ---------------------------------------------------------------------- */
-/* Shell + header                                                         */
+/* Shell: left sidebar + main content                                     */
 /* ---------------------------------------------------------------------- */
 .app-shell {
   width: 94%;
-  max-width: 1100px;
+  max-width: 1280px;
   margin: 0 auto;
   padding: 32px 0 56px;
+  display: grid;
+  grid-template-columns: 250px minmax(0, 1fr);
+  align-items: start;
+  gap: 28px;
   animation: shell-in 0.4s ease-out;
 }
 
@@ -125,15 +129,89 @@ button { font-family: inherit; }
   to { opacity: 1; transform: translateY(0); }
 }
 
-.floor-header { margin-bottom: 18px; }
+.app-main { min-width: 0; }
 
-.eyebrow-row {
+/* --- Sidebar: brand, controls, and the standing status widgets --- */
+.app-sidebar {
+  position: sticky;
+  top: 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  padding: 18px 16px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface);
+  max-height: calc(100vh - 48px);
+  overflow-y: auto;
+}
+
+.sidebar-section {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding-top: 16px;
+  border-top: 1px solid var(--line-soft);
+}
+.sidebar-section:first-child { padding-top: 0; border-top: none; }
+
+.sidebar-heading {
+  font-family: var(--mono);
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--faint);
+}
+
+.sidebar-tag {
+  font-size: 11px;
+  color: var(--faint);
+  margin-top: 4px;
+}
+
+.sidebar-controls { flex-direction: row; flex-wrap: wrap; align-items: center; gap: 8px; }
+
+.sidebar-account {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 10px;
-  margin-bottom: 10px;
+  gap: 8px;
 }
+.sidebar-account-email {
+  font-size: 11.5px;
+  color: var(--dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+
+/* Sidebar-context overrides for widgets that were originally designed as
+   horizontal strips — same components, just laid out for a ~220px column
+   instead of the full-width header. */
+.app-sidebar .visitor-stats {
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  border: none;
+  background: none;
+}
+.app-sidebar .visitor-sep { display: none; }
+.app-sidebar .xp-panel { margin: 0; }
+.app-sidebar .sys-bar {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 10px;
+  margin: 0;
+  padding: 0;
+  border: none;
+  background: none;
+}
+.app-sidebar .sys-bar-mem { min-width: 0; }
+
+.floor-header { margin-bottom: 18px; }
 
 .eyebrow {
   font-family: var(--mono);
@@ -681,6 +759,20 @@ button { font-family: inherit; }
 /* ---------------------------------------------------------------------- */
 /* Responsive                                                             */
 /* ---------------------------------------------------------------------- */
+/* ---------------------------------------------------------------------- */
+/* Responsive: sidebar collapses under the main content                   */
+/* ---------------------------------------------------------------------- */
+@media (max-width: 900px) {
+  .app-shell { grid-template-columns: 1fr; }
+  .app-sidebar {
+    position: static;
+    order: 2;
+    max-height: none;
+  }
+  .app-main { order: 1; }
+  .sidebar-controls { justify-content: space-between; }
+}
+
 @media (max-width: 560px) {
   .app-shell { width: 94%; padding: 22px 0 40px; }
   .floor-header h1 { font-size: 26px; }
@@ -742,15 +834,8 @@ button { font-family: inherit; }
 .permissions-option-hint { color: var(--faint); }
 
 /* ---------------------------------------------------------------------- */
-/* Header controls: theme switcher + docs link                            */
+/* Theme switcher                                                         */
 /* ---------------------------------------------------------------------- */
-.header-controls {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  flex-wrap: wrap;
-}
-
 .theme-switch {
   display: flex;
   align-items: center;
@@ -1396,8 +1481,6 @@ button { font-family: inherit; }
 /* Responsive: new components                                             */
 /* ---------------------------------------------------------------------- */
 @media (max-width: 640px) {
-  .eyebrow-row { flex-direction: column; align-items: flex-start; gap: 8px; }
-  .header-controls { width: 100%; justify-content: space-between; }
   .visitor-stats { gap: 10px 14px; }
   .docs-overlay { padding: 3vh 3%; }
   .docs-panel { max-height: 94vh; }
