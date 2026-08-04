@@ -3,6 +3,8 @@
 // split the frontend out to a separate static host, set VITE_API_BASE_URL to
 // this service's full URL and set CORS_ORIGIN on the server (src/config.js)
 // to the frontend's origin.
+import { getToken } from './lib/auth.js';
+
 const PRIMARY_API_BASE = (import.meta.env.VITE_API_BASE_URL || '').replace(/\/$/, '');
 
 // Alternate backend, tried only if the primary base above is genuinely
@@ -36,6 +38,63 @@ async function fetchWithFallback(path, init) {
   }
 }
 
+// ---------------------------------------------------------------------------
+// Auth — signup/login/logout. The build service itself (upload/status/
+// logs/download below) requires a valid session token; these three are the
+// only endpoints reachable while signed out.
+// ---------------------------------------------------------------------------
+
+async function parseJsonResponse(res, fallbackMessage) {
+  const bodyText = await res.text();
+  let data = {};
+  try {
+    data = bodyText ? JSON.parse(bodyText) : {};
+  } catch {
+    throw new Error(fallbackMessage);
+  }
+  if (!res.ok) {
+    throw new Error(data.error || fallbackMessage);
+  }
+  return data;
+}
+
+export async function signup(email, password) {
+  const res = await fetchWithFallback('/api/auth/signup', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email, password }),
+  });
+  return parseJsonResponse(res, `Sign up failed: HTTP ${res.status}.`);
+}
+
+export async function login(email, password) {
+  const res = await fetchWithFallback('/api/auth/login', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email, password }),
+  });
+  return parseJsonResponse(res, `Log in failed: HTTP ${res.status}.`);
+}
+
+export async function logout() {
+  const token = getToken();
+  if (!token) return;
+  try {
+    await fetchWithFallback('/api/auth/logout', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}` },
+    });
+  } catch {
+    // Best-effort — the client clears its own token regardless (see
+    // lib/auth.js's clearAuth, called by the caller of this function).
+  }
+}
+
+function authHeaders() {
+  const token = getToken();
+  return token ? { Authorization: `Bearer ${token}` } : {};
+}
+
 export async function uploadZip(file, permissions = []) {
   const formData = new FormData();
   formData.append('zip', file);
@@ -48,7 +107,7 @@ export async function uploadZip(file, permissions = []) {
 
   let res;
   try {
-    res = await fetchWithFallback('/api/upload', { method: 'POST', body: formData });
+    res = await fetchWithFallback('/api/upload', { method: 'POST', headers: authHeaders(), body: formData });
   } catch {
     // Neither the primary base nor the fallback could be reached at all.
     throw new Error(
@@ -86,7 +145,11 @@ export function streamLogs(jobId, { onLog, onNotice, onStatus, onQueue, onStep, 
   // Uses whichever base the upload for this job actually succeeded
   // against (see fetchWithFallback above) rather than re-probing here —
   // EventSource has no built-in concept of "try this other host instead".
-  const source = new EventSource(`${activeApiBase}/api/logs/${jobId}/stream`);
+  // EventSource also can't set a custom Authorization header, so the
+  // session token travels as a query param here instead (the server
+  // accepts either — see require_user() in app/routes.py).
+  const tokenParam = getToken() ? `?token=${encodeURIComponent(getToken())}` : '';
+  const source = new EventSource(`${activeApiBase}/api/logs/${jobId}/stream${tokenParam}`);
 
   source.onmessage = (e) => {
     onLog?.(JSON.parse(e.data));
@@ -124,7 +187,10 @@ export function streamLogs(jobId, { onLog, onNotice, onStatus, onQueue, onStep, 
 }
 
 export function downloadUrl(jobId) {
-  return `${activeApiBase}/api/download/${jobId}`;
+  // A plain <a href> download link can't carry a header either, so the
+  // token rides as a query param here too, same as the log stream above.
+  const tokenParam = getToken() ? `?token=${encodeURIComponent(getToken())}` : '';
+  return `${activeApiBase}/api/download/${jobId}${tokenParam}`;
 }
 
 // Powers the standing status bar (SystemStatusBar.jsx) — a single,

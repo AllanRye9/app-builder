@@ -12,9 +12,10 @@ import time
 from pathlib import Path
 
 import psutil
-from fastapi import APIRouter, BackgroundTasks, Form, HTTPException, Request, UploadFile
+from fastapi import APIRouter, BackgroundTasks, Depends, Form, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 
+from . import auth
 from . import build_runner
 from . import visitors
 from .config import settings
@@ -23,6 +24,27 @@ from .permissions import sanitize_permissions
 from .validate import ValidationError, validate_and_extract
 
 router = APIRouter()
+
+
+# ---------------------------------------------------------------------------
+# Auth — required for the actual build service (upload/status/logs/download)
+# below. EventSource (used by the log stream) can't set a custom header, so
+# the token is accepted either as a Bearer header or a ?token= query param.
+# ---------------------------------------------------------------------------
+
+
+def _bearer_token(request: Request) -> str | None:
+    header = request.headers.get("authorization") or ""
+    if header.lower().startswith("bearer "):
+        return header[7:].strip() or None
+    return request.query_params.get("token")
+
+
+async def require_user(request: Request) -> auth.User:
+    user = auth.user_for_token(_bearer_token(request))
+    if user is None:
+        raise HTTPException(status_code=401, detail="Sign in required.")
+    return user
 
 _UPLOAD_DIR = settings.JOB_ROOT / "_uploads"
 _UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
@@ -89,6 +111,37 @@ async def health() -> dict:
     disk/job-store access, so it stays fast even while builds are running.
     """
     return {"ok": True}
+
+
+@router.post("/auth/signup", status_code=201)
+async def auth_signup(request: Request) -> dict:
+    body = await request.json()
+    try:
+        user, token = auth.signup(str(body.get("email", "")), str(body.get("password", "")))
+    except auth.AuthError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"token": token, "email": user.email}
+
+
+@router.post("/auth/login")
+async def auth_login(request: Request) -> dict:
+    body = await request.json()
+    try:
+        user, token = auth.login(str(body.get("email", "")), str(body.get("password", "")))
+    except auth.AuthError as exc:
+        raise HTTPException(status_code=401, detail=str(exc)) from exc
+    return {"token": token, "email": user.email}
+
+
+@router.post("/auth/logout")
+async def auth_logout(request: Request, _user: auth.User = Depends(require_user)) -> dict:
+    auth.logout(_bearer_token(request))
+    return {"ok": True}
+
+
+@router.get("/auth/me")
+async def auth_me(user: auth.User = Depends(require_user)) -> dict:
+    return {"email": user.email}
 
 
 @router.post("/visitors/ping")
@@ -172,6 +225,7 @@ async def upload(
     request: Request,
     zip: UploadFile | None = None,
     permissions: str | None = Form(default=None),
+    _user: auth.User = Depends(require_user),
 ) -> JSONResponse:
     _check_rate_limit(request)
 
@@ -241,7 +295,7 @@ async def upload(
 
 
 @router.get("/status/{job_id}")
-async def get_status(job_id: str) -> dict:
+async def get_status(job_id: str, _user: auth.User = Depends(require_user)) -> dict:
     job = jobs.get(job_id)
     if job is None:
         raise HTTPException(status_code=404, detail="Unknown job id.")
@@ -267,7 +321,7 @@ def _sse(event: str | None, data: object) -> str:
 
 
 @router.get("/logs/{job_id}/stream")
-async def stream_logs(job_id: str, request: Request) -> StreamingResponse:
+async def stream_logs(job_id: str, request: Request, _user: auth.User = Depends(require_user)) -> StreamingResponse:
     job = jobs.get(job_id)
     if job is None:
         raise HTTPException(status_code=404)
@@ -321,7 +375,7 @@ async def stream_logs(job_id: str, request: Request) -> StreamingResponse:
 
 
 @router.get("/download/{job_id}")
-async def download(job_id: str, background_tasks: BackgroundTasks):
+async def download(job_id: str, background_tasks: BackgroundTasks, _user: auth.User = Depends(require_user)):
     job = jobs.get(job_id)
     if job is None:
         raise HTTPException(status_code=404, detail="Unknown job id.")

@@ -58,6 +58,15 @@ class Settings:
         )
     )
 
+    # Accounts + sessions — see app/auth.py. Same "outside JOB_ROOT, one
+    # file for the life of the volume/container" reasoning as
+    # VISITOR_DB_PATH above: this must survive the per-job TTL sweep.
+    AUTH_DB_PATH: Path = field(
+        default_factory=lambda: Path(
+            os.environ.get("AUTH_DB_PATH") or Path(tempfile.gettempdir()) / "apk-builder-cache" / "auth.db"
+        )
+    )
+
     # Frontend and API are served from this same service by default, so
     # cross-origin requests aren't the normal case here — kept available in
     # case the frontend is ever split out separately.

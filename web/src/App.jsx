@@ -2,20 +2,46 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import Dropzone from './components/Dropzone.jsx';
 import JobTicket from './components/JobTicket.jsx';
 import ToastStack from './components/ToastStack.jsx';
-import PermissionsPicker from './components/PermissionsPicker.jsx';
+import PermissionsConfirmModal from './components/PermissionsConfirmModal.jsx';
 import SystemStatusBar from './components/SystemStatusBar.jsx';
 import Documentation from './components/Documentation.jsx';
 import ThemeSwitcher from './components/ThemeSwitcher.jsx';
 import VisitorStats from './components/VisitorStats.jsx';
 import XPBar from './components/XPBar.jsx';
 import Confetti from './components/Confetti.jsx';
-import { uploadZip } from './api.js';
+import AuthGate from './components/AuthGate.jsx';
+import { uploadZip, logout as apiLogout } from './api.js';
+import { getToken, getStoredEmail, setAuth, clearAuth } from './lib/auth.js';
 import { getStoredTheme, applyTheme } from './lib/theme.js';
 import { getProgress, recordUpload, recordBuildResult, recordDocsView, recordStructureView, levelForXp, BADGES } from './lib/gamification.js';
 
 let nextTempId = 0;
 
 export default function App() {
+  const [authToken, setAuthToken] = useState(getToken);
+  const [authEmail, setAuthEmail] = useState(getStoredEmail);
+
+  function handleAuthenticated(token, email) {
+    setAuth(token, email);
+    setAuthToken(token);
+    setAuthEmail(email);
+  }
+
+  function handleLogout() {
+    apiLogout();
+    clearAuth();
+    setAuthToken('');
+    setAuthEmail('');
+  }
+
+  if (!authToken) {
+    return <AuthGate onAuthenticated={handleAuthenticated} />;
+  }
+
+  return <BuildFloor authEmail={authEmail} onLogout={handleLogout} />;
+}
+
+function BuildFloor({ authEmail, onLogout }) {
   // Each entry: { tempId, id, fileName, fileSize, status, error, queuePosition, downloadReady }
   // tempId exists from the moment a file is picked (client-side, before the
   // server has assigned a real job id) so the card can appear instantly
@@ -24,7 +50,7 @@ export default function App() {
   const [jobs, setJobs] = useState([]);
   const [notices, setNotices] = useState([]);
   // Applies to whatever's uploaded next — chosen by the person building the
-  // app, never invented by the server (see components/PermissionsPicker.jsx).
+  // app, never invented by the server (see components/PermissionsConfirmModal.jsx).
   const [permissions, setPermissions] = useState([]);
   const [docsOpen, setDocsOpen] = useState(false);
   const [theme, setTheme] = useState(getStoredTheme);
@@ -33,6 +59,10 @@ export default function App() {
   const confettiTimer = useRef(null);
   const nextNoticeId = useRef(0);
   const notifyAsked = useRef(false);
+  // Files sit here from the moment they're picked/dropped until the
+  // permissions popup is confirmed — nothing is sent to the server and no
+  // build starts before that confirmation.
+  const [pendingFiles, setPendingFiles] = useState(null);
 
   useEffect(() => {
     applyTheme(theme);
@@ -103,7 +133,25 @@ export default function App() {
     }
   }
 
-  function handleFilesSelected(files) {
+  // Called the instant files are picked/dropped — opens the permissions
+  // popup instead of uploading right away.
+  function handleFilesPicked(files) {
+    setPendingFiles(files);
+  }
+
+  function cancelPendingFiles() {
+    setPendingFiles(null);
+  }
+
+  // Called only once the popup's Confirm button is pressed — this is what
+  // actually starts the upload/build for the pending batch.
+  function confirmPendingFiles() {
+    const files = pendingFiles;
+    setPendingFiles(null);
+    if (files && files.length > 0) startUploads(files);
+  }
+
+  function startUploads(files) {
     ensureNotifyPermission();
     files.forEach((file) => {
       const tempId = `t${nextTempId++}`;
@@ -170,6 +218,8 @@ export default function App() {
             <button type="button" className="docs-link" onClick={openDocs}>
               <span aria-hidden="true">📄</span> File structure docs
             </button>
+            {authEmail && <span className="ticket-size" title={authEmail}>{authEmail}</span>}
+            <button type="button" className="logout-link" onClick={onLogout}>Log out</button>
           </div>
         </div>
         <h1>Turn React, Kotlin, or Java projects into APKs, all at once</h1>
@@ -190,8 +240,16 @@ export default function App() {
 
       <SystemStatusBar />
 
-      <PermissionsPicker selected={permissions} onChange={setPermissions} />
-      <Dropzone onFilesSelected={handleFilesSelected} />
+      <Dropzone onFilesSelected={handleFilesPicked} />
+
+      <PermissionsConfirmModal
+        open={pendingFiles !== null}
+        files={pendingFiles || []}
+        selected={permissions}
+        onChange={setPermissions}
+        onCancel={cancelPendingFiles}
+        onConfirm={confirmPendingFiles}
+      />
 
       {jobs.length > 0 && (
         <div className="stats-bar" aria-label="Build floor summary">

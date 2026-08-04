@@ -102,9 +102,9 @@ export default function Documentation({ open, onClose }) {
               <li>300&nbsp;MB max archive size by default (deployment-configurable).</li>
               <li>Builds run in an isolated, disposable container per job — capped CPU/memory,
                 destroyed after each build.</li>
-              <li>Android permissions are only ever added if you check them in the permissions
-                picker before uploading — an untouched selection builds the manifest exactly as
-                the project already declares it.</li>
+              <li>Android permissions are only ever added if you check them in the confirmation
+                popup that appears after you pick a file — an untouched selection builds the
+                manifest exactly as the project already declares it.</li>
             </ul>
           </section>
         </div>
