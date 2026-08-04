@@ -15,8 +15,8 @@ const OPTIONS = [
   { value: 'android.permission.WRITE_EXTERNAL_STORAGE', label: 'Storage (legacy)' },
 ];
 
-// Bare content only — no collapsible chrome of its own. Lives inside the
-// right column of BuildInfoPanel, which owns the single shared toggle.
+// Bare content only — lives inside the right sidebar (see App.jsx /
+// SidePanel.jsx), which owns the section title.
 export default function PermissionsPicker({ selected, onChange }) {
   function toggle(value) {
     if (selected.includes(value)) {

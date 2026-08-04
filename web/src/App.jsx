@@ -3,7 +3,9 @@ import Dropzone from './components/Dropzone.jsx';
 import JobTicket from './components/JobTicket.jsx';
 import ToastStack from './components/ToastStack.jsx';
 import SystemStatusBar from './components/SystemStatusBar.jsx';
-import BuildInfoPanel from './components/BuildInfoPanel.jsx';
+import StructureGuide from './components/StructureGuide.jsx';
+import PermissionsPicker from './components/PermissionsPicker.jsx';
+import SidePanel from './components/SidePanel.jsx';
 import VisitorStats from './components/VisitorStats.jsx';
 import { uploadZip } from './api.js';
 
@@ -104,67 +106,85 @@ export default function App() {
   );
 
   return (
-    <main className="app-shell">
+    <div className="app-layout">
       <ToastStack notices={notices} onDismiss={dismissToast} />
 
-      <header className="floor-header">
-        <div className="eyebrow"><span className="dot" />apk-builder — build floor</div>
-        <h1>Turn React, Kotlin, or Java projects into APKs, all at once</h1>
-        <p className="sub">
-          Drop in as many project archives as you like — a React/Vite web project (built via
-          Capacitor) or a native Kotlin/Java Android project (built directly with its own Gradle
-          wrapper) both work. Each one runs in its own isolated, disposable container with a
-          pre-configured Android SDK — nothing runs on your machine, and nothing here waits in
-          line behind anything else.
-        </p>
-        <VisitorStats />
-      </header>
+      <aside className="side-panel side-panel-left" aria-label="Project structure guide">
+        <SidePanel title="Project structure guide">
+          <StructureGuide />
+        </SidePanel>
+      </aside>
 
-      <SystemStatusBar />
+      <div className="center-scroll">
+        <main className="app-shell">
+          <header className="floor-header">
+            <div className="eyebrow"><span className="dot" />apk-builder — build floor</div>
+            <h1>Turn React, Kotlin, or Java projects into APKs, all at once</h1>
+            <p className="sub">
+              Drop in as many project archives as you like — a React/Vite web project (built via
+              Capacitor) or a native Kotlin/Java Android project (built directly with its own Gradle
+              wrapper) both work. Each one runs in its own isolated, disposable container with a
+              pre-configured Android SDK — nothing runs on your machine, and nothing here waits in
+              line behind anything else.
+            </p>
+            <VisitorStats />
+          </header>
 
-      <BuildInfoPanel permissions={permissions} onPermissionsChange={setPermissions} />
-      <Dropzone onFilesSelected={handleFilesSelected} />
+          <SystemStatusBar />
 
-      {jobs.length > 0 && (
-        <div className="stats-bar" aria-label="Build floor summary">
-          <Stat value={counts.building} label="building" tone="active" />
-          <Stat value={counts.queued} label="waiting" tone="queued" />
-          <Stat value={counts.done} label="done" tone="done" />
-          {counts.failed > 0 && <Stat value={counts.failed} label="failed" tone="failed" />}
-        </div>
-      )}
+          <Dropzone onFilesSelected={handleFilesSelected} />
 
-      <div className="ticket-list">
-        {jobs.length === 0 ? (
-          <div className="empty-floor">
-            <div className="empty-floor-glyph" aria-hidden="true">
-              <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-                <rect x="3.5" y="5.5" width="17" height="13" rx="1.5" stroke="currentColor" strokeWidth="1.4" />
-                <path d="M3.5 9.5h17" stroke="currentColor" strokeWidth="1.4" />
-                <path d="M7 7.2h.01M9.4 7.2h.01" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
-              </svg>
+          {jobs.length > 0 && (
+            <div className="stats-bar" aria-label="Build floor summary">
+              <Stat value={counts.building} label="building" tone="active" />
+              <Stat value={counts.queued} label="waiting" tone="queued" />
+              <Stat value={counts.done} label="done" tone="done" />
+              {counts.failed > 0 && <Stat value={counts.failed} label="failed" tone="failed" />}
             </div>
-            <div className="empty-floor-title">The floor is empty</div>
-            <div className="empty-floor-sub">Drop a project above to start your first build.</div>
+          )}
+
+          <div className="ticket-list">
+            {jobs.length === 0 ? (
+              <div className="empty-floor">
+                <div className="empty-floor-glyph" aria-hidden="true">
+                  <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                    <rect x="3.5" y="5.5" width="17" height="13" rx="1.5" stroke="currentColor" strokeWidth="1.4" />
+                    <path d="M3.5 9.5h17" stroke="currentColor" strokeWidth="1.4" />
+                    <path d="M7 7.2h.01M9.4 7.2h.01" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
+                  </svg>
+                </div>
+                <div className="empty-floor-title">The floor is empty</div>
+                <div className="empty-floor-sub">Drop a project above to start your first build.</div>
+              </div>
+            ) : (
+              jobs.map((job) => (
+                <JobTicket
+                  key={job.tempId}
+                  job={job}
+                  onUpdate={(patch) => patchJob(job.tempId, patch)}
+                  onDone={(status, error) => handleJobDone(job.tempId, job.fileName, status, error)}
+                  onNotice={pushToast}
+                  onRemove={() => removeJob(job.tempId)}
+                />
+              ))
+            )}
           </div>
-        ) : (
-          jobs.map((job) => (
-            <JobTicket
-              key={job.tempId}
-              job={job}
-              onUpdate={(patch) => patchJob(job.tempId, patch)}
-              onDone={(status, error) => handleJobDone(job.tempId, job.fileName, status, error)}
-              onNotice={pushToast}
-              onRemove={() => removeJob(job.tempId)}
-            />
-          ))
-        )}
+
+          <footer className="app-footer">
+            Builds run with capped CPU/memory in ephemeral containers, destroyed after each job.
+          </footer>
+        </main>
       </div>
 
-      <footer className="app-footer">
-        Builds run with capped CPU/memory in ephemeral containers, destroyed after each job.
-      </footer>
-    </main>
+      <aside className="side-panel side-panel-right" aria-label="Android permissions">
+        <SidePanel
+          title="Android permissions"
+          subtitle={permissions.length > 0 ? `${permissions.length} selected` : null}
+        >
+          <PermissionsPicker selected={permissions} onChange={setPermissions} />
+        </SidePanel>
+      </aside>
+    </div>
   );
 }
 
