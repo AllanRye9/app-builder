@@ -1,73 +1,49 @@
 import { useEffect, useState } from 'react';
+import CountUp from './CountUp.jsx';
 import { pingVisitor, fetchVisitorStats } from '../api.js';
+import { getVisitorId } from '../lib/visitor.js';
 
-// Refreshes so the numbers stay live while the tab is open (other people's
-// visits show up without a reload) — the ping that actually records this
-// visitor only ever fires once, on mount.
-const POLL_MS = 30000;
-
+// Pings the server exactly once per mount (StrictMode double-invoke aside,
+// production only mounts this once) so a repeat reload of the same tab
+// doesn't hammer the endpoint — the count itself is already deduped
+// server-side by visitorId regardless.
 export default function VisitorStats() {
   const [stats, setStats] = useState(null);
   const [failed, setFailed] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
-    let timer;
-
-    async function poll() {
-      try {
-        const data = await fetchVisitorStats();
-        if (!cancelled) {
-          setStats(data);
-          setFailed(false);
-        }
-      } catch {
-        if (!cancelled) setFailed(true);
-      } finally {
-        if (!cancelled) timer = setTimeout(poll, POLL_MS);
-      }
-    }
-
-    // Record this visitor once, then switch to read-only polling for
-    // subsequent refreshes — a page just sitting open shouldn't keep
-    // re-counting the same visit.
-    pingVisitor()
-      .then((data) => {
-        if (cancelled) return;
-        setStats(data);
-        timer = setTimeout(poll, POLL_MS);
-      })
-      .catch(() => {
-        if (cancelled) return;
-        setFailed(true);
-        timer = setTimeout(poll, POLL_MS);
-      });
-
-    return () => {
-      cancelled = true;
-      clearTimeout(timer);
-    };
+    pingVisitor(getVisitorId())
+      .then((data) => { if (!cancelled) setStats(data); })
+      .catch(() =>
+        fetchVisitorStats()
+          .then((data) => { if (!cancelled) setStats(data); })
+          .catch(() => { if (!cancelled) setFailed(true); })
+      );
+    return () => { cancelled = true; };
   }, []);
 
-  if (failed && !stats) return null;
-  if (!stats) return null;
+  if (failed) return null;
 
   return (
-    <div className="visitor-bar" aria-label="Visitor analytics">
-      <VisitorStat value={stats.totalVisitors} label="total visitors" tone="copper" />
-      <span className="visitor-bar-rule" aria-hidden="true" />
-      <VisitorStat value={stats.todayVisitors} label="today" tone="teal" />
-      <span className="visitor-bar-rule" aria-hidden="true" />
-      <VisitorStat value={stats.countries} label={stats.countries === 1 ? 'country reached' : 'countries reached'} tone="violet" />
+    <div className="visitor-stats" aria-label="Visitor statistics" aria-live="off">
+      <VisitorStat label="total visitors" value={stats?.total} glyph="👥" />
+      <span className="visitor-sep" aria-hidden="true" />
+      <VisitorStat label="today" value={stats?.today} glyph="📅" />
+      <span className="visitor-sep" aria-hidden="true" />
+      <VisitorStat label="countries reached" value={stats?.countries} glyph="🌍" />
     </div>
   );
 }
 
-function VisitorStat({ value, label, tone }) {
+function VisitorStat({ label, value, glyph }) {
   return (
-    <div className={`visitor-stat visitor-stat-${tone}`}>
-      <span className="visitor-stat-value">{value.toLocaleString()}</span>
-      <span className="visitor-stat-label">{label}</span>
+    <div className="visitor-stat">
+      <span className="visitor-glyph" aria-hidden="true">{glyph}</span>
+      <span className="visitor-value">
+        {value === undefined ? <span className="visitor-skel" /> : <CountUp value={value} />}
+      </span>
+      <span className="visitor-label">{label}</span>
     </div>
   );
 }

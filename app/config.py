@@ -48,6 +48,16 @@ class Settings:
     )
     JOB_TTL_MS: int = field(default_factory=lambda: _env_int("JOB_TTL_MS", 60 * 60 * 1000))
 
+    # Persistent (survives restarts) visitor analytics — see
+    # app/visitors.py. Deliberately OUTSIDE JOB_ROOT, which gets individual
+    # job directories wiped by the TTL sweep; this one file lives for the
+    # life of the volume/container.
+    VISITOR_DB_PATH: Path = field(
+        default_factory=lambda: Path(
+            os.environ.get("VISITOR_DB_PATH") or Path(tempfile.gettempdir()) / "apk-builder-cache" / "visitors.db"
+        )
+    )
+
     # Frontend and API are served from this same service by default, so
     # cross-origin requests aren't the normal case here — kept available in
     # case the frontend is ever split out separately.
@@ -121,27 +131,6 @@ class Settings:
     # Bounds disk usage: oldest-used cache entries are evicted once this
     # many distinct lockfile hashes have accumulated.
     DEP_CACHE_MAX_ENTRIES: int = field(default_factory=lambda: _env_int("DEP_CACHE_MAX_ENTRIES", 8))
-
-    # Deliberately alongside the caches above (not under JOB_ROOT, which
-    # per-job purge/TTL sweeps clean out) — a small JSON file of
-    # hashed-IP -> {country, first_seen, last_seen}, persisted for as long
-    # as this container lives so visitor counts survive individual job
-    # churn and process restarts within the same volume.
-    VISITOR_STORE_PATH: Path = field(
-        default_factory=lambda: Path(
-            os.environ.get("VISITOR_STORE_PATH")
-            or Path(tempfile.gettempdir()) / "apk-builder-cache" / "visitors.json"
-        )
-    )
-    # Free-tier IP geolocation lookup, used once per newly-seen IP (results
-    # are cached indefinitely in VISITOR_STORE_PATH, never re-queried).
-    # Override to point at a self-hosted/paid resolver if this app runs
-    # somewhere that can't reach the public internet, or set to "" to
-    # disable country lookups entirely (visitors still get counted).
-    GEOIP_LOOKUP_URL: str = field(
-        default_factory=lambda: _env_str("GEOIP_LOOKUP_URL", "http://ip-api.com/json/{ip}?fields=status,countryCode")
-    )
-    GEOIP_TIMEOUT_S: float = field(default_factory=lambda: float(_env_str("GEOIP_TIMEOUT_S", "2.5")))
 
     # Real OOM prevention, not just a job-count ceiling — see
     # build_runner.py's pump().

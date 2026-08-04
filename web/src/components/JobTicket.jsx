@@ -3,7 +3,7 @@ import Pipeline from './Pipeline.jsx';
 import LogPanel from './LogPanel.jsx';
 import DownloadCard from './DownloadCard.jsx';
 import ErrorBanner from './ErrorBanner.jsx';
-import FileTree from './FileTree.jsx';
+import StructurePanel from './StructurePanel.jsx';
 import { streamLogs } from '../api.js';
 
 // One ticket per build. Owns its own SSE subscription and log buffer — logs
@@ -11,7 +11,7 @@ import { streamLogs } from '../api.js';
 // into the parent's state and re-render the whole floor on every line.
 // Only the small summary fields (status, error, queue position) are
 // reported upward, for the stats bar and the toast/notification triggers.
-export default function JobTicket({ job, onUpdate, onDone, onNotice, onRemove }) {
+export default function JobTicket({ job, onUpdate, onDone, onNotice, onRemove, onStructureExpand }) {
   const [logs, setLogs] = useState([]);
   const [stage, setStage] = useState('validating');
   const [expanded, setExpanded] = useState(false);
@@ -91,7 +91,13 @@ export default function JobTicket({ job, onUpdate, onDone, onNotice, onRemove })
           cacheHit={cacheHit}
         />
 
-        {job.file && <FileTree file={job.file} />}
+        {job.file && (
+          <StructurePanel
+            file={job.file}
+            onDetected={(projectType) => onUpdate({ projectType })}
+            onExpand={onStructureExpand}
+          />
+        )}
 
         <ErrorBanner message={job.status === 'failed' ? job.error : ''} />
 

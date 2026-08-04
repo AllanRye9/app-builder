@@ -1,13 +1,17 @@
-import { useCallback, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import Dropzone from './components/Dropzone.jsx';
 import JobTicket from './components/JobTicket.jsx';
 import ToastStack from './components/ToastStack.jsx';
-import SystemStatusBar from './components/SystemStatusBar.jsx';
-import StructureGuide from './components/StructureGuide.jsx';
 import PermissionsPicker from './components/PermissionsPicker.jsx';
-import SidePanel from './components/SidePanel.jsx';
+import SystemStatusBar from './components/SystemStatusBar.jsx';
+import Documentation from './components/Documentation.jsx';
+import ThemeSwitcher from './components/ThemeSwitcher.jsx';
 import VisitorStats from './components/VisitorStats.jsx';
+import XPBar from './components/XPBar.jsx';
+import Confetti from './components/Confetti.jsx';
 import { uploadZip } from './api.js';
+import { getStoredTheme, applyTheme } from './lib/theme.js';
+import { getProgress, recordUpload, recordBuildResult, recordDocsView, recordStructureView, levelForXp, BADGES } from './lib/gamification.js';
 
 let nextTempId = 0;
 
@@ -22,8 +26,17 @@ export default function App() {
   // Applies to whatever's uploaded next — chosen by the person building the
   // app, never invented by the server (see components/PermissionsPicker.jsx).
   const [permissions, setPermissions] = useState([]);
+  const [docsOpen, setDocsOpen] = useState(false);
+  const [theme, setTheme] = useState(getStoredTheme);
+  const [progress, setProgress] = useState(getProgress);
+  const [confettiKey, setConfettiKey] = useState(0);
+  const confettiTimer = useRef(null);
   const nextNoticeId = useRef(0);
   const notifyAsked = useRef(false);
+
+  useEffect(() => {
+    applyTheme(theme);
+  }, [theme]);
 
   const pushToast = useCallback((payload) => {
     nextNoticeId.current += 1;
@@ -33,6 +46,41 @@ export default function App() {
   const dismissToast = useCallback((id) => {
     setNotices((prev) => prev.filter((n) => n.id !== id));
   }, []);
+
+  const celebrate = useCallback(() => {
+    setConfettiKey((k) => k + 1);
+    clearTimeout(confettiTimer.current);
+    confettiTimer.current = setTimeout(() => setConfettiKey(0), 1700);
+  }, []);
+
+  // Applies the result of any gamification event: updates the XP bar,
+  // and — only when something actually changed — surfaces a toast and a
+  // confetti burst so leveling up or a new badge feels like an event, not
+  // a silent number change buried in a collapsed panel.
+  const applyGameResult = useCallback((result) => {
+    if (!result) return;
+    setProgress(result.state);
+    if (result.leveledUp) {
+      pushToast({
+        level: 'success',
+        title: `Level up! Now level ${levelForXp(result.state.xp)}`,
+        message: 'Check the XP bar for your progress and badges.',
+      });
+      celebrate();
+    }
+    result.newBadges.forEach((id) => {
+      const badge = BADGES.find((b) => b.id === id);
+      if (badge) {
+        pushToast({ level: 'success', title: `Badge unlocked: ${badge.label}`, message: badge.desc });
+        celebrate();
+      }
+    });
+  }, [pushToast, celebrate]);
+
+  function openDocs() {
+    setDocsOpen(true);
+    applyGameResult(recordDocsView());
+  }
 
   function patchJob(tempId, patch) {
     setJobs((prev) => prev.map((j) => (j.tempId === tempId ? { ...j, ...patch } : j)));
@@ -70,9 +118,11 @@ export default function App() {
           error: null,
           queuePosition: null,
           downloadReady: false,
+          projectType: null,
         },
         ...prev,
       ]);
+      applyGameResult(recordUpload());
 
       uploadZip(file, permissions)
         .then((jobId) => patchJob(tempId, { id: jobId, status: 'validating' }))
@@ -83,15 +133,17 @@ export default function App() {
     });
   }
 
-  function handleJobDone(tempId, fileName, status, error) {
+  function handleJobDone(tempId, fileName, status, error, projectType) {
     if (status === 'success') {
       pushToast({ level: 'success', title: 'Build complete', message: `${fileName} is ready to download.` });
       notifyBrowser('Build complete', `${fileName} is ready to download.`);
+      celebrate();
     } else {
       const message = error || `${fileName} failed to build.`;
       pushToast({ level: 'error', title: 'Build failed', message });
       notifyBrowser('Build failed', message);
     }
+    applyGameResult(recordBuildResult(status, projectType));
   }
 
   const counts = jobs.reduce(
@@ -106,85 +158,83 @@ export default function App() {
   );
 
   return (
-    <div className="app-layout">
+    <main className="app-shell">
       <ToastStack notices={notices} onDismiss={dismissToast} />
+      {confettiKey > 0 && <Confetti key={confettiKey} />}
 
-      <aside className="side-panel side-panel-left" aria-label="Project structure guide">
-        <SidePanel title="Project structure guide">
-          <StructureGuide />
-        </SidePanel>
-      </aside>
-
-      <div className="center-scroll">
-        <main className="app-shell">
-          <header className="floor-header">
-            <div className="eyebrow"><span className="dot" />apk-builder — build floor</div>
-            <h1>Turn React, Kotlin, or Java projects into APKs, all at once</h1>
-            <p className="sub">
-              Drop in as many project archives as you like — a React/Vite web project (built via
-              Capacitor) or a native Kotlin/Java Android project (built directly with its own Gradle
-              wrapper) both work. Each one runs in its own isolated, disposable container with a
-              pre-configured Android SDK — nothing runs on your machine, and nothing here waits in
-              line behind anything else.
-            </p>
-            <VisitorStats />
-          </header>
-
-          <SystemStatusBar />
-
-          <Dropzone onFilesSelected={handleFilesSelected} />
-
-          {jobs.length > 0 && (
-            <div className="stats-bar" aria-label="Build floor summary">
-              <Stat value={counts.building} label="building" tone="active" />
-              <Stat value={counts.queued} label="waiting" tone="queued" />
-              <Stat value={counts.done} label="done" tone="done" />
-              {counts.failed > 0 && <Stat value={counts.failed} label="failed" tone="failed" />}
-            </div>
-          )}
-
-          <div className="ticket-list">
-            {jobs.length === 0 ? (
-              <div className="empty-floor">
-                <div className="empty-floor-glyph" aria-hidden="true">
-                  <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-                    <rect x="3.5" y="5.5" width="17" height="13" rx="1.5" stroke="currentColor" strokeWidth="1.4" />
-                    <path d="M3.5 9.5h17" stroke="currentColor" strokeWidth="1.4" />
-                    <path d="M7 7.2h.01M9.4 7.2h.01" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
-                  </svg>
-                </div>
-                <div className="empty-floor-title">The floor is empty</div>
-                <div className="empty-floor-sub">Drop a project above to start your first build.</div>
-              </div>
-            ) : (
-              jobs.map((job) => (
-                <JobTicket
-                  key={job.tempId}
-                  job={job}
-                  onUpdate={(patch) => patchJob(job.tempId, patch)}
-                  onDone={(status, error) => handleJobDone(job.tempId, job.fileName, status, error)}
-                  onNotice={pushToast}
-                  onRemove={() => removeJob(job.tempId)}
-                />
-              ))
-            )}
+      <header className="floor-header">
+        <div className="eyebrow-row">
+          <div className="eyebrow"><span className="dot" />apk-builder — build floor</div>
+          <div className="header-controls">
+            <ThemeSwitcher theme={theme} onChange={setTheme} />
+            <button type="button" className="docs-link" onClick={openDocs}>
+              <span aria-hidden="true">📄</span> File structure docs
+            </button>
           </div>
+        </div>
+        <h1>Turn React, Kotlin, or Java projects into APKs, all at once</h1>
+        <p className="sub">
+          Drop in as many project archives as you like — a React/Vite web project (Capacitor) or a
+          native Kotlin/Java Android project both work, each in its own disposable container.{' '}
+          <button type="button" className="inline-link" onClick={openDocs}>
+            See the required layout →
+          </button>
+        </p>
 
-          <footer className="app-footer">
-            Builds run with capped CPU/memory in ephemeral containers, destroyed after each job.
-          </footer>
-        </main>
+        <VisitorStats />
+      </header>
+
+      <Documentation open={docsOpen} onClose={() => setDocsOpen(false)} />
+
+      <XPBar progress={progress} />
+
+      <SystemStatusBar />
+
+      <PermissionsPicker selected={permissions} onChange={setPermissions} />
+      <Dropzone onFilesSelected={handleFilesSelected} />
+
+      {jobs.length > 0 && (
+        <div className="stats-bar" aria-label="Build floor summary">
+          <Stat value={counts.building} label="building" tone="active" />
+          <Stat value={counts.queued} label="waiting" tone="queued" />
+          <Stat value={counts.done} label="done" tone="done" />
+          {counts.failed > 0 && <Stat value={counts.failed} label="failed" tone="failed" />}
+        </div>
+      )}
+
+      <div className="ticket-list">
+        {jobs.length === 0 ? (
+          <div className="empty-floor">
+            <div className="empty-floor-glyph" aria-hidden="true">
+              <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                <rect x="3.5" y="5.5" width="17" height="13" rx="1.5" stroke="currentColor" strokeWidth="1.4" />
+                <path d="M3.5 9.5h17" stroke="currentColor" strokeWidth="1.4" />
+                <path d="M7 7.2h.01M9.4 7.2h.01" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
+              </svg>
+            </div>
+            <div className="empty-floor-title">The floor is empty</div>
+            <div className="empty-floor-sub">Drop a project above to start your first build.</div>
+          </div>
+        ) : (
+          jobs.map((job) => (
+            <JobTicket
+              key={job.tempId}
+              job={job}
+              onUpdate={(patch) => patchJob(job.tempId, patch)}
+              onDone={(status, error) => handleJobDone(job.tempId, job.fileName, status, error, job.projectType)}
+              onNotice={pushToast}
+              onRemove={() => removeJob(job.tempId)}
+              onStructureExpand={() => applyGameResult(recordStructureView())}
+            />
+          ))
+        )}
       </div>
 
-      <aside className="side-panel side-panel-right" aria-label="Android permissions">
-        <SidePanel
-          title="Android permissions"
-          subtitle={permissions.length > 0 ? `${permissions.length} selected` : null}
-        >
-          <PermissionsPicker selected={permissions} onChange={setPermissions} />
-        </SidePanel>
-      </aside>
-    </div>
+      <footer className="app-footer">
+        Builds run with capped CPU/memory in ephemeral containers, destroyed after each job. ·{' '}
+        <button type="button" className="inline-link" onClick={openDocs}>File structure docs</button>
+      </footer>
+    </main>
   );
 }
 

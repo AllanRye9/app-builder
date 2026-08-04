@@ -16,11 +16,11 @@ from fastapi import APIRouter, BackgroundTasks, Form, HTTPException, Request, Up
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 
 from . import build_runner
+from . import visitors
 from .config import settings
 from .job_store import bus, create_job, jobs, log, notice, purge_job, set_status
 from .permissions import sanitize_permissions
 from .validate import ValidationError, validate_and_extract
-from . import visitors
 
 router = APIRouter()
 
@@ -91,6 +91,36 @@ async def health() -> dict:
     return {"ok": True}
 
 
+@router.post("/visitors/ping")
+async def visitors_ping(request: Request) -> dict:
+    """Called once per browser session (see web/src/lib/visitor.js) to
+    record a visit and hand back the freshly-aggregated totals in the same
+    round trip — the dashboard's animated counter needs both anyway, and
+    this avoids a second request just to read what the first one wrote.
+    """
+    body = await request.json()
+    visitor_id = str(body.get("visitorId") or "").strip()
+    if not visitor_id or len(visitor_id) > 128:
+        raise HTTPException(status_code=400, detail="Missing or invalid visitorId.")
+    country = visitors.country_from_request(request)
+    stats = visitors.record_visit(visitor_id, country)
+    return {
+        "total": stats.total,
+        "today": stats.today,
+        "countries": stats.countries,
+    }
+
+
+@router.get("/visitors")
+async def visitors_stats() -> dict:
+    stats = visitors.get_stats()
+    return {
+        "total": stats.total,
+        "today": stats.today,
+        "countries": stats.countries,
+    }
+
+
 @router.get("/system")
 async def system_status() -> dict:
     """Powers the dashboard's global status bar — a standardized,
@@ -137,25 +167,7 @@ async def _save_upload(file: UploadFile, dest_path: Path) -> int:
     return size
 
 
-@router.post("/visitors/ping")
-async def visitors_ping(request: Request) -> dict:
-    """Called once per dashboard load (see web/src/api.js). Records this
-    visitor if their IP hasn't been seen before (or refreshes their
-    "last seen" date if it has) and returns the current totals in the
-    same round trip.
-    """
-    return await visitors.record_visit(request)
-
-
-@router.get("/visitors/stats")
-async def visitors_stats() -> dict:
-    """Read-only refresh for the standing counter in the UI — does not
-    itself count as a visit.
-    """
-    return await visitors.get_stats()
-
-
-
+@router.post("/upload", status_code=202)
 async def upload(
     request: Request,
     zip: UploadFile | None = None,

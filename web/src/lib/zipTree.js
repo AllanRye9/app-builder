@@ -1,121 +1,126 @@
 import JSZip from 'jszip';
 
-// Kept in sync with app/validate.py — purely cosmetic here (the server is
-// still the source of truth and re-validates independently), this just lets
-// the browser flag the same things the uploader is about to be told about,
-// before the archive ever leaves the browser.
+// Mirrors app/validate.py so the tree preview flags the same things the
+// server will reject — the point is to catch a bad archive before the
+// upload round-trip, not to duplicate the server's authority over it.
 const FORBIDDEN_TOP_LEVEL = new Set(['android', 'ios', 'platforms']);
-const ROOT_MARKERS = new Set([
-  'package.json',
-  'settings.gradle',
-  'settings.gradle.kts',
-  'build.gradle',
-  'build.gradle.kts',
-]);
-const WRAPPER_FILES = new Set([
-  'gradlew',
-  'gradlew.bat',
-  'gradle-wrapper.jar',
-  'gradle-wrapper.properties',
+
+const ALLOWED_EXTENSIONS = new Set([
+  '.js', '.jsx', '.ts', '.tsx', '.json', '.css', '.scss', '.sass', '.less',
+  '.html', '.htm', '.md', '.mjs', '.cjs', '.svg', '.png', '.jpg', '.jpeg',
+  '.gif', '.webp', '.ico', '.woff', '.woff2', '.ttf', '.eot', '.txt',
+  '.gitignore', '.npmrc', '.yml', '.yaml', '.lock',
+  '.mp4', '.webm', '.mov', '.mp3', '.wav', '.ogg', '.m4a', '.pdf',
+  '.kt', '.kts', '.java', '.gradle', '.pro', '.properties', '.aidl', '.xml',
 ]);
 
-// Cap how much of a huge archive gets built into DOM nodes / animated in —
-// past this, the raw count still shows, just without a row-per-file.
-const MAX_RENDERED_ENTRIES = 400;
+const ALLOWED_BASENAMES = new Set([
+  'license', 'license.md', 'license.txt', 'readme', 'dockerfile',
+  '.env.example', '.env.sample',
+  'gradlew', 'gradlew.bat', 'gradle-wrapper.jar', 'gradle-wrapper.properties',
+]);
 
-function flagFor(name, depth, isDir) {
-  if (isDir && depth === 0 && FORBIDDEN_TOP_LEVEL.has(name.toLowerCase())) return 'forbidden';
-  if (!isDir && depth <= 1 && ROOT_MARKERS.has(name)) return 'marker';
-  if (!isDir && WRAPPER_FILES.has(name)) return 'wrapper';
-  return null;
+const PACKAGE_JSON_RE = /(^|\/)package\.json$/;
+const SETTINGS_GRADLE_RE = /(^|\/)settings\.gradle(\.kts)?$/;
+const BUILD_GRADLE_RE = /(^|\/)build\.gradle(\.kts)?$/;
+
+function isAllowed(entryName) {
+  const base = entryName.split('/').pop().toLowerCase();
+  if (ALLOWED_BASENAMES.has(base)) return true;
+  const dot = base.lastIndexOf('.');
+  const ext = dot === -1 ? '' : base.slice(dot);
+  return !ext || ALLOWED_EXTENSIONS.has(ext);
 }
 
-/**
- * Reads a .zip File in the browser (no upload involved) and returns a
- * nested tree plus a lightweight summary — the same shape of information
- * app/validate.py checks server-side, surfaced early so the person can see
- * what's about to be sent.
- */
-export async function inspectZip(file) {
+// Reads a .zip File in the browser (no upload involved) and returns a
+// tree + a small summary of what the server would decide about it, so the
+// person can see and fix problems before spending an upload round-trip.
+export async function readZipStructure(file) {
   const zip = await JSZip.loadAsync(file);
-  const entries = Object.values(zip.files)
-    .filter((e) => e.name && !e.name.startsWith('__MACOSX/'))
-    .sort((a, b) => a.name.localeCompare(b.name));
+  const entries = Object.values(zip.files).sort((a, b) => a.name.localeCompare(b.name));
 
-  const root = { name: '', path: '', type: 'dir', depth: -1, children: new Map() };
+  const rootChildren = new Map();
   let fileCount = 0;
-  let dirCount = 0;
-  let truncated = false;
-  let rendered = 0;
-  // Flat record of every flagged node, independent of the nested tree
-  // structure — this is what detection runs against, so it still catches a
-  // package.json/settings.gradle (or a forbidden folder) one level down
-  // inside a single top-level wrapper folder, same as validate.py's raw
-  // entry scan does before it ever flattens anything.
-  const flagged = [];
+  let skippedCount = 0;
+  let hasPackageJson = false;
+  let hasSettingsGradle = false;
+  let hasBuildGradle = false;
+  let forbiddenFolder = null;
+  let wrapperFiles = { gradlew: false, gradlewBat: false, wrapperJar: false, wrapperProps: false };
 
   for (const entry of entries) {
-    const isDir = entry.dir || entry.name.endsWith('/');
-    const parts = entry.name.split('/').filter(Boolean);
+    const cleanName = entry.name.replace(/\\/g, '/').replace(/\/+$/, '');
+    const parts = cleanName.split('/').filter(Boolean);
     if (parts.length === 0) continue;
 
-    let node = root;
-    let pathSoFar = '';
+    const top = parts[0].toLowerCase();
+    if (FORBIDDEN_TOP_LEVEL.has(top) && !forbiddenFolder) forbiddenFolder = parts[0];
+
+    const atRoot = parts.length <= 2;
+    if (!entry.dir) {
+      if (atRoot && PACKAGE_JSON_RE.test(cleanName)) hasPackageJson = true;
+      if (atRoot && SETTINGS_GRADLE_RE.test(cleanName)) hasSettingsGradle = true;
+      if (atRoot && BUILD_GRADLE_RE.test(cleanName)) hasBuildGradle = true;
+      if (cleanName.endsWith('gradlew')) wrapperFiles.gradlew = true;
+      if (cleanName.endsWith('gradlew.bat')) wrapperFiles.gradlewBat = true;
+      if (cleanName.endsWith('gradle/wrapper/gradle-wrapper.jar')) wrapperFiles.wrapperJar = true;
+      if (cleanName.endsWith('gradle/wrapper/gradle-wrapper.properties')) wrapperFiles.wrapperProps = true;
+    }
+
+    // Build the nested map that becomes the rendered tree.
+    let level = rootChildren;
     parts.forEach((part, i) => {
-      const isLast = i === parts.length - 1;
-      pathSoFar = pathSoFar ? `${pathSoFar}/${part}` : part;
-      const thisIsDir = !isLast || isDir;
-
-      if (!node.children.has(part)) {
-        if (rendered >= MAX_RENDERED_ENTRIES) {
-          truncated = true;
-          return;
-        }
-        rendered += 1;
-        const flag = flagFor(part, i, thisIsDir);
-        const newNode = {
+      const isLeaf = i === parts.length - 1 && !entry.dir;
+      const path = parts.slice(0, i + 1).join('/');
+      if (!level.has(part)) {
+        level.set(part, {
           name: part,
-          path: pathSoFar,
-          type: thisIsDir ? 'dir' : 'file',
-          depth: i,
-          flag,
-          children: thisIsDir ? new Map() : null,
-        };
-        node.children.set(part, newNode);
-        if (flag) flagged.push(newNode);
-        if (thisIsDir) dirCount += 1;
-        else fileCount += 1;
+          path,
+          type: isLeaf ? 'file' : 'dir',
+          flagged: FORBIDDEN_TOP_LEVEL.has(part.toLowerCase()) && i === 0,
+          marker: null,
+          children: new Map(),
+        });
       }
-      node = node.children.get(part);
+      const node = level.get(part);
+      if (isLeaf) {
+        if (PACKAGE_JSON_RE.test(path) && parts.length <= 2) node.marker = 'entry';
+        else if (SETTINGS_GRADLE_RE.test(path) && parts.length <= 2) node.marker = 'entry';
+        else if (!isAllowed(cleanName)) node.marker = 'skipped';
+      }
+      level = node.children;
     });
+
+    if (!entry.dir) {
+      if (isAllowed(cleanName)) fileCount += 1;
+      else skippedCount += 1;
+    }
   }
 
-  function toArray(node) {
-    if (!node.children) return node;
-    const kids = Array.from(node.children.values())
+  function finalize(map) {
+    return Array.from(map.values())
       .sort((a, b) => (a.type === b.type ? a.name.localeCompare(b.name) : a.type === 'dir' ? -1 : 1))
-      .map(toArray);
-    return { ...node, children: kids };
+      .map((node) => ({ ...node, children: finalize(node.children) }));
   }
 
-  const tree = toArray(root).children;
+  const projectType = hasPackageJson ? 'capacitor-web' : (hasSettingsGradle && hasBuildGradle) ? 'native-android' : null;
 
-  const forbiddenAtRoot = flagged.filter((n) => n.flag === 'forbidden').map((n) => n.name);
-  const hasPackageJson = flagged.some((n) => n.flag === 'marker' && n.name === 'package.json');
-  const hasSettingsGradle = flagged.some(
-    (n) => n.flag === 'marker' && (n.name === 'settings.gradle' || n.name === 'settings.gradle.kts')
-  );
-
-  let projectType = null;
-  if (hasPackageJson) projectType = 'capacitor-web';
-  else if (hasSettingsGradle) projectType = 'native-android';
+  let wrapperComplete = true;
+  const missingWrapper = [];
+  if (projectType === 'native-android') {
+    if (!wrapperFiles.gradlew) missingWrapper.push('gradlew');
+    if (!wrapperFiles.wrapperJar) missingWrapper.push('gradle/wrapper/gradle-wrapper.jar');
+    if (!wrapperFiles.wrapperProps) missingWrapper.push('gradle/wrapper/gradle-wrapper.properties');
+    wrapperComplete = missingWrapper.length === 0;
+  }
 
   return {
-    tree,
+    tree: finalize(rootChildren),
     fileCount,
-    dirCount,
-    truncated,
-    forbiddenAtRoot,
+    skippedCount,
     projectType,
+    forbiddenFolder,
+    wrapperComplete,
+    missingWrapper,
   };
 }

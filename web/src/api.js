@@ -136,19 +136,22 @@ export async function fetchSystemStatus() {
   return res.json();
 }
 
-// Records this browser as a unique visitor (deduped server-side by IP) and
-// returns the fresh totals in the same round trip. Meant to be called once
-// per app load, not on every render.
-export async function pingVisitor() {
-  const res = await fetchWithFallback('/api/visitors/ping', { method: 'POST' });
+// Records this browser's visit (deduped server-side by visitorId — see
+// lib/visitor.js) and returns the freshly-aggregated totals in the same
+// round trip, so the animated counter has real numbers to count up to
+// immediately instead of a placeholder-then-flash.
+export async function pingVisitor(visitorId) {
+  const res = await fetchWithFallback('/api/visitors/ping', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ visitorId }),
+  });
   if (!res.ok) throw new Error(`Visitor ping failed: HTTP ${res.status}`);
   return res.json();
 }
 
-// Read-only refresh of the same totals, for periodic polling without
-// counting as another visit.
 export async function fetchVisitorStats() {
-  const res = await fetchWithFallback('/api/visitors/stats');
+  const res = await fetchWithFallback('/api/visitors');
   if (!res.ok) throw new Error(`Visitor stats request failed: HTTP ${res.status}`);
   return res.json();
 }

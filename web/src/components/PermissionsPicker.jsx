@@ -1,3 +1,5 @@
+import { useState } from 'react';
+
 // Common permissions surfaced up front; not exhaustive — the server accepts
 // the fuller whitelist in src/permissions.js, this is just the shortlist
 // worth a checkbox. Nothing here is applied unless the uploader checks it:
@@ -15,9 +17,9 @@ const OPTIONS = [
   { value: 'android.permission.WRITE_EXTERNAL_STORAGE', label: 'Storage (legacy)' },
 ];
 
-// Bare content only — lives inside the right sidebar (see App.jsx /
-// SidePanel.jsx), which owns the section title.
 export default function PermissionsPicker({ selected, onChange }) {
+  const [open, setOpen] = useState(false);
+
   function toggle(value) {
     if (selected.includes(value)) {
       onChange(selected.filter((v) => v !== value));
@@ -28,25 +30,40 @@ export default function PermissionsPicker({ selected, onChange }) {
 
   return (
     <div className="permissions-picker">
-      <p className="permissions-hint">
-        Only what you check here gets added to the app — nothing is added automatically. Leave
-        everything unchecked to build with whatever the project already declares.
-      </p>
-      <div className="permissions-grid">
-        {OPTIONS.map((opt) => (
-          <label key={opt.value} className="permissions-option">
-            <input
-              type="checkbox"
-              checked={selected.includes(opt.value)}
-              onChange={() => toggle(opt.value)}
-            />
-            <span>
-              {opt.label}
-              {opt.hint && <span className="permissions-option-hint"> — {opt.hint}</span>}
-            </span>
-          </label>
-        ))}
-      </div>
+      <button
+        type="button"
+        className="permissions-toggle"
+        onClick={() => setOpen((o) => !o)}
+        aria-expanded={open}
+      >
+        <span className={`log-toggle-caret${open ? ' open' : ''}`} aria-hidden="true">▸</span>
+        Android permissions
+        {selected.length > 0 && <span className="permissions-count">{selected.length} selected</span>}
+      </button>
+
+      {open && (
+        <div className="permissions-body">
+          <p className="permissions-hint">
+            Only what you check here gets added to the app — nothing is added automatically.
+            Leave everything unchecked to build with whatever the project already declares.
+          </p>
+          <div className="permissions-grid">
+            {OPTIONS.map((opt) => (
+              <label key={opt.value} className="permissions-option">
+                <input
+                  type="checkbox"
+                  checked={selected.includes(opt.value)}
+                  onChange={() => toggle(opt.value)}
+                />
+                <span>
+                  {opt.label}
+                  {opt.hint && <span className="permissions-option-hint"> — {opt.hint}</span>}
+                </span>
+              </label>
+            ))}
+          </div>
+        </div>
+      )}
     </div>
   );
 }

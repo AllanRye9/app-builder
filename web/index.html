@@ -11,6 +11,16 @@
       rel="stylesheet"
     />
     <title>apk-builder — build floor</title>
+    <script>
+      (function () {
+        try {
+          var t = localStorage.getItem('apk-builder:theme');
+          if (t === 'light' || t === 'ocean' || t === 'dark') {
+            document.documentElement.setAttribute('data-theme', t);
+          }
+        } catch (e) {}
+      })();
+    </script>
   </head>
   <body>
     <div id="root"></div>
