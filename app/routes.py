@@ -20,6 +20,7 @@ from .config import settings
 from .job_store import bus, create_job, jobs, log, notice, purge_job, set_status
 from .permissions import sanitize_permissions
 from .validate import ValidationError, validate_and_extract
+from . import visitors
 
 router = APIRouter()
 
@@ -136,7 +137,25 @@ async def _save_upload(file: UploadFile, dest_path: Path) -> int:
     return size
 
 
-@router.post("/upload", status_code=202)
+@router.post("/visitors/ping")
+async def visitors_ping(request: Request) -> dict:
+    """Called once per dashboard load (see web/src/api.js). Records this
+    visitor if their IP hasn't been seen before (or refreshes their
+    "last seen" date if it has) and returns the current totals in the
+    same round trip.
+    """
+    return await visitors.record_visit(request)
+
+
+@router.get("/visitors/stats")
+async def visitors_stats() -> dict:
+    """Read-only refresh for the standing counter in the UI — does not
+    itself count as a visit.
+    """
+    return await visitors.get_stats()
+
+
+
 async def upload(
     request: Request,
     zip: UploadFile | None = None,

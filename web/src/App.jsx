@@ -4,6 +4,8 @@ import JobTicket from './components/JobTicket.jsx';
 import ToastStack from './components/ToastStack.jsx';
 import PermissionsPicker from './components/PermissionsPicker.jsx';
 import SystemStatusBar from './components/SystemStatusBar.jsx';
+import StructureGuide from './components/StructureGuide.jsx';
+import VisitorStats from './components/VisitorStats.jsx';
 import { uploadZip } from './api.js';
 
 let nextTempId = 0;
@@ -60,6 +62,7 @@ export default function App() {
         {
           tempId,
           id: null,
+          file,
           fileName: file.name,
           fileSize: file.size,
           status: 'uploading',
@@ -115,10 +118,12 @@ export default function App() {
           pre-configured Android SDK — nothing runs on your machine, and nothing here waits in
           line behind anything else.
         </p>
+        <VisitorStats />
       </header>
 
       <SystemStatusBar />
 
+      <StructureGuide />
       <PermissionsPicker selected={permissions} onChange={setPermissions} />
       <Dropzone onFilesSelected={handleFilesSelected} />
 

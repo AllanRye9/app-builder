@@ -3,6 +3,7 @@ import Pipeline from './Pipeline.jsx';
 import LogPanel from './LogPanel.jsx';
 import DownloadCard from './DownloadCard.jsx';
 import ErrorBanner from './ErrorBanner.jsx';
+import FileTree from './FileTree.jsx';
 import { streamLogs } from '../api.js';
 
 // One ticket per build. Owns its own SSE subscription and log buffer — logs
@@ -89,6 +90,8 @@ export default function JobTicket({ job, onUpdate, onDone, onNotice, onRemove })
           buildProgress={buildProgress}
           cacheHit={cacheHit}
         />
+
+        {job.file && <FileTree file={job.file} />}
 
         <ErrorBanner message={job.status === 'failed' ? job.error : ''} />
 

@@ -135,3 +135,20 @@ export async function fetchSystemStatus() {
   if (!res.ok) throw new Error(`System status request failed: HTTP ${res.status}`);
   return res.json();
 }
+
+// Records this browser as a unique visitor (deduped server-side by IP) and
+// returns the fresh totals in the same round trip. Meant to be called once
+// per app load, not on every render.
+export async function pingVisitor() {
+  const res = await fetchWithFallback('/api/visitors/ping', { method: 'POST' });
+  if (!res.ok) throw new Error(`Visitor ping failed: HTTP ${res.status}`);
+  return res.json();
+}
+
+// Read-only refresh of the same totals, for periodic polling without
+// counting as another visit.
+export async function fetchVisitorStats() {
+  const res = await fetchWithFallback('/api/visitors/stats');
+  if (!res.ok) throw new Error(`Visitor stats request failed: HTTP ${res.status}`);
+  return res.json();
+}
