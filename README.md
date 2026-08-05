@@ -15,6 +15,8 @@ app/
   permissions.py      Android permission whitelist/sanitizer
   dep_cache.py        Content-addressed node_modules hardlink cache
   build_runner.py      Build queue, memory admission control, subprocess build pipeline
+  db.py                SQLite setup (schema, indexes, WAL) for visitor/country analytics
+  visitors.py           Unique-visitor + reached-country tracking (IP-deduplicated)
   routes.py           API endpoints
   main.py             FastAPI app assembly, CORS, static hosting, error handling
   shared-build-cache-init.gradle   (unchanged Gradle init script)
@@ -51,6 +53,16 @@ Dockerfile
   to disk (so a request lying about `Content-Length` still gets capped).
 - **Error shape**: all error responses are normalized to `{"error": "..."}`
   via FastAPI exception handlers, matching what `web/src/api.js` expects.
+- **Visitor/country analytics**: `app/db.py` keeps a small SQLite database
+  (`VISITOR_DB_PATH`, WAL mode) of one row per unique visitor IP (stored as
+  a truncated SHA-256 hash, never the raw address), with a `CHECK`
+  constraint on `country_code` and indexes on `last_seen`/`country_code` so
+  the totals shown in the UI are indexed `COUNT`/`COUNT(DISTINCT)` queries
+  rather than a full scan. Country is resolved via `GEOIP_LOOKUP_URL` once
+  per new IP and cached in the row forever after. If a pre-database
+  `visitors.json` (the old flat-file store) is found at startup, its rows
+  are imported into the database once and the file renamed to
+  `visitors.json.migrated`.
 
 ## Running locally
 
@@ -78,3 +90,15 @@ unchanged Node/JDK/Android-SDK toolchain the build subprocesses need.
 
 Identical names/defaults to the original — see `app/config.py`. `PORT`
 now defaults to `8000` (uvicorn convention) instead of `3000`.
+
+A few variables have no equivalent in the original Node app, since they
+back features added on top of it: `VISITOR_DB_PATH`, `VISITOR_STORE_PATH`
+(legacy migration source only), `GEOIP_LOOKUP_URL`, `GEOIP_TIMEOUT_S` — see
+app/db.py and app/visitors.py.
+
+Also new: `AI_API_KEY` (or `ANTHROPIC_API_KEY`) enables the optional
+AI-assist panel that appears when a build fails (see app/ai_assist.py).
+Leave it unset and the panel still appears but answers with a plain
+"not configured" message instead of calling out to the AI provider —
+nothing else about the app changes either way. `AI_MODEL`, `AI_API_URL`,
+and `AI_TIMEOUT_S` override the provider/model/timeout if needed.

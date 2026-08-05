@@ -3,7 +3,7 @@ import Pipeline from './Pipeline.jsx';
 import LogPanel from './LogPanel.jsx';
 import DownloadCard from './DownloadCard.jsx';
 import ErrorBanner from './ErrorBanner.jsx';
-import StructurePanel from './StructurePanel.jsx';
+import FileTree from './FileTree.jsx';
 import { streamLogs } from '../api.js';
 
 // One ticket per build. Owns its own SSE subscription and log buffer — logs
@@ -11,7 +11,7 @@ import { streamLogs } from '../api.js';
 // into the parent's state and re-render the whole floor on every line.
 // Only the small summary fields (status, error, queue position) are
 // reported upward, for the stats bar and the toast/notification triggers.
-export default function JobTicket({ job, onUpdate, onDone, onNotice, onRemove, onStructureExpand }) {
+export default function JobTicket({ job, onUpdate, onDone, onNotice, onRemove, onAskAI }) {
   const [logs, setLogs] = useState([]);
   const [stage, setStage] = useState('validating');
   const [expanded, setExpanded] = useState(false);
@@ -91,15 +91,18 @@ export default function JobTicket({ job, onUpdate, onDone, onNotice, onRemove, o
           cacheHit={cacheHit}
         />
 
-        {job.file && (
-          <StructurePanel
-            file={job.file}
-            onDetected={(projectType) => onUpdate({ projectType })}
-            onExpand={onStructureExpand}
-          />
-        )}
+        {job.file && <FileTree file={job.file} />}
 
-        <ErrorBanner message={job.status === 'failed' ? job.error : ''} />
+        {job.status === 'failed' && (
+          <div className="ticket-error-row">
+            <ErrorBanner message={job.error} />
+            {job.id && (
+              <button type="button" className="ask-ai-btn" onClick={() => onAskAI(job)}>
+                Ask AI about this
+              </button>
+            )}
+          </div>
+        )}
 
         {job.status === 'success' && <DownloadCard jobId={job.id} filename={job.fileName} />}
 

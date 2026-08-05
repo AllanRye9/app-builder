@@ -3,8 +3,6 @@
 // split the frontend out to a separate static host, set VITE_API_BASE_URL to
 // this service's full URL and set CORS_ORIGIN on the server (src/config.js)
 // to the frontend's origin.
-import { getToken } from './lib/auth.js';
-
 const PRIMARY_API_BASE = (import.meta.env.VITE_API_BASE_URL || '').replace(/\/$/, '');
 
 // Alternate backend, tried only if the primary base above is genuinely
@@ -38,63 +36,6 @@ async function fetchWithFallback(path, init) {
   }
 }
 
-// ---------------------------------------------------------------------------
-// Auth — signup/login/logout. The build service itself (upload/status/
-// logs/download below) requires a valid session token; these three are the
-// only endpoints reachable while signed out.
-// ---------------------------------------------------------------------------
-
-async function parseJsonResponse(res, fallbackMessage) {
-  const bodyText = await res.text();
-  let data = {};
-  try {
-    data = bodyText ? JSON.parse(bodyText) : {};
-  } catch {
-    throw new Error(fallbackMessage);
-  }
-  if (!res.ok) {
-    throw new Error(data.error || fallbackMessage);
-  }
-  return data;
-}
-
-export async function signup(email, password) {
-  const res = await fetchWithFallback('/api/auth/signup', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ email, password }),
-  });
-  return parseJsonResponse(res, `Sign up failed: HTTP ${res.status}.`);
-}
-
-export async function login(email, password) {
-  const res = await fetchWithFallback('/api/auth/login', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ email, password }),
-  });
-  return parseJsonResponse(res, `Log in failed: HTTP ${res.status}.`);
-}
-
-export async function logout() {
-  const token = getToken();
-  if (!token) return;
-  try {
-    await fetchWithFallback('/api/auth/logout', {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${token}` },
-    });
-  } catch {
-    // Best-effort — the client clears its own token regardless (see
-    // lib/auth.js's clearAuth, called by the caller of this function).
-  }
-}
-
-function authHeaders() {
-  const token = getToken();
-  return token ? { Authorization: `Bearer ${token}` } : {};
-}
-
 export async function uploadZip(file, permissions = []) {
   const formData = new FormData();
   formData.append('zip', file);
@@ -107,7 +48,7 @@ export async function uploadZip(file, permissions = []) {
 
   let res;
   try {
-    res = await fetchWithFallback('/api/upload', { method: 'POST', headers: authHeaders(), body: formData });
+    res = await fetchWithFallback('/api/upload', { method: 'POST', body: formData });
   } catch {
     // Neither the primary base nor the fallback could be reached at all.
     throw new Error(
@@ -145,11 +86,7 @@ export function streamLogs(jobId, { onLog, onNotice, onStatus, onQueue, onStep, 
   // Uses whichever base the upload for this job actually succeeded
   // against (see fetchWithFallback above) rather than re-probing here —
   // EventSource has no built-in concept of "try this other host instead".
-  // EventSource also can't set a custom Authorization header, so the
-  // session token travels as a query param here instead (the server
-  // accepts either — see require_user() in app/routes.py).
-  const tokenParam = getToken() ? `?token=${encodeURIComponent(getToken())}` : '';
-  const source = new EventSource(`${activeApiBase}/api/logs/${jobId}/stream${tokenParam}`);
+  const source = new EventSource(`${activeApiBase}/api/logs/${jobId}/stream`);
 
   source.onmessage = (e) => {
     onLog?.(JSON.parse(e.data));
@@ -186,11 +123,36 @@ export function streamLogs(jobId, { onLog, onNotice, onStatus, onQueue, onStep, 
   return () => source.close();
 }
 
+// Powers the AI-assist panel (ErrorAssistPanel.jsx), which only ever
+// appears for a failed job — the server scopes the answer to that job's
+// own error/log context server-side rather than trusting whatever context
+// the client might claim. Works with or without an AI provider configured
+// server-side (see app/ai_assist.py): either way this resolves with
+// { answer, aiAvailable }, never throws for a missing key specifically —
+// only for a genuinely failed request (bad job id, rate limit, etc).
+export async function askAssist(jobId, question) {
+  const res = await fetchWithFallback('/api/assist', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ jobId, question }),
+  });
+
+  const bodyText = await res.text();
+  let data = {};
+  try {
+    data = bodyText ? JSON.parse(bodyText) : {};
+  } catch {
+    throw new Error(`Unexpected response from the server (HTTP ${res.status}).`);
+  }
+
+  if (!res.ok) {
+    throw new Error(data.error || `Request failed: HTTP ${res.status}.`);
+  }
+  return data;
+}
+
 export function downloadUrl(jobId) {
-  // A plain <a href> download link can't carry a header either, so the
-  // token rides as a query param here too, same as the log stream above.
-  const tokenParam = getToken() ? `?token=${encodeURIComponent(getToken())}` : '';
-  return `${activeApiBase}/api/download/${jobId}${tokenParam}`;
+  return `${activeApiBase}/api/download/${jobId}`;
 }
 
 // Powers the standing status bar (SystemStatusBar.jsx) — a single,
@@ -202,22 +164,19 @@ export async function fetchSystemStatus() {
   return res.json();
 }
 
-// Records this browser's visit (deduped server-side by visitorId — see
-// lib/visitor.js) and returns the freshly-aggregated totals in the same
-// round trip, so the animated counter has real numbers to count up to
-// immediately instead of a placeholder-then-flash.
-export async function pingVisitor(visitorId) {
-  const res = await fetchWithFallback('/api/visitors/ping', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ visitorId }),
-  });
+// Records this browser as a unique visitor (deduped server-side by IP) and
+// returns the fresh totals in the same round trip. Meant to be called once
+// per app load, not on every render.
+export async function pingVisitor() {
+  const res = await fetchWithFallback('/api/visitors/ping', { method: 'POST' });
   if (!res.ok) throw new Error(`Visitor ping failed: HTTP ${res.status}`);
   return res.json();
 }
 
+// Read-only refresh of the same totals, for periodic polling without
+// counting as another visit.
 export async function fetchVisitorStats() {
-  const res = await fetchWithFallback('/api/visitors');
+  const res = await fetchWithFallback('/api/visitors/stats');
   if (!res.ok) throw new Error(`Visitor stats request failed: HTTP ${res.status}`);
   return res.json();
 }

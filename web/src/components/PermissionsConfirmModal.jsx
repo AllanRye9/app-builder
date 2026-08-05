@@ -1,11 +1,12 @@
 import { useEffect } from 'react';
-import { OPTIONS } from '../lib/permissionOptions.js';
+import PermissionsPicker from './PermissionsPicker.jsx';
 
 // Shown the moment files are picked/dropped, before anything is sent to
 // the server. Nothing uploads and no build starts until Confirm is
 // pressed — Cancel discards the pending files entirely. Permissions
-// picked here apply to every file in this batch, same as the picker did
-// before, just moved to the point where it actually matters.
+// picked here apply to every file in this batch, same as the old
+// always-visible sidebar picker did — just moved to the point where it
+// actually matters instead of sitting in the right side panel.
 export default function PermissionsConfirmModal({ open, files, selected, onChange, onConfirm, onCancel }) {
   useEffect(() => {
     if (!open) return undefined;
@@ -16,62 +17,39 @@ export default function PermissionsConfirmModal({ open, files, selected, onChang
 
   if (!open) return null;
 
-  function toggle(value) {
-    if (selected.includes(value)) {
-      onChange(selected.filter((v) => v !== value));
-    } else {
-      onChange([...selected, value]);
-    }
-  }
-
   return (
-    <div className="docs-overlay" onClick={onCancel}>
+    <div className="perm-modal-overlay" onClick={onCancel}>
       <div
-        className="docs-panel perm-modal-panel"
+        className="perm-modal-panel"
         role="dialog"
         aria-modal="true"
         aria-label="Confirm Android permissions"
         onClick={(e) => e.stopPropagation()}
       >
-        <div className="docs-head">
-          <h2>Confirm before building</h2>
-          <button type="button" className="docs-close" onClick={onCancel} aria-label="Close">×</button>
+        <div className="perm-modal-head">
+          <div>
+            <div className="perm-modal-eyebrow">Before the build starts</div>
+            <h2>Confirm Android permissions</h2>
+          </div>
+          <button type="button" className="perm-modal-close" onClick={onCancel} aria-label="Close">×</button>
         </div>
 
-        <div className="docs-scroll">
-          <p className="permissions-hint" style={{ marginBottom: 14 }}>
-            About to upload {files.length === 1 ? '1 file' : `${files.length} files`}:
+        <div className="perm-modal-scroll hide-scrollbar">
+          <p className="perm-modal-files-label">
+            Uploading {files.length === 1 ? '1 file' : `${files.length} files`}:
           </p>
-          <ul className="docs-flat-list" style={{ marginBottom: 18 }}>
+          <ul className="perm-modal-files">
             {files.map((f) => <li key={f.name}>{f.name}</li>)}
           </ul>
 
-          <p className="permissions-hint">
-            Only what you check here gets added to the app — nothing is added automatically.
-            Leave everything unchecked to build with whatever the project already declares.
-          </p>
-          <div className="permissions-grid">
-            {OPTIONS.map((opt) => (
-              <label key={opt.value} className="permissions-option">
-                <input
-                  type="checkbox"
-                  checked={selected.includes(opt.value)}
-                  onChange={() => toggle(opt.value)}
-                />
-                <span>
-                  {opt.label}
-                  {opt.hint && <span className="permissions-option-hint"> — {opt.hint}</span>}
-                </span>
-              </label>
-            ))}
-          </div>
+          <PermissionsPicker selected={selected} onChange={onChange} />
+        </div>
 
-          <div className="perm-modal-actions">
-            <button type="button" className="perm-modal-cancel" onClick={onCancel}>Cancel</button>
-            <button type="button" className="perm-modal-confirm" onClick={onConfirm}>
-              Confirm &amp; start build
-            </button>
-          </div>
+        <div className="perm-modal-actions">
+          <button type="button" className="perm-modal-cancel" onClick={onCancel}>Cancel</button>
+          <button type="button" className="perm-modal-confirm" onClick={onConfirm}>
+            Confirm &amp; start build
+          </button>
         </div>
       </div>
     </div>

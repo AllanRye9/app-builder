@@ -48,25 +48,6 @@ class Settings:
     )
     JOB_TTL_MS: int = field(default_factory=lambda: _env_int("JOB_TTL_MS", 60 * 60 * 1000))
 
-    # Persistent (survives restarts) visitor analytics — see
-    # app/visitors.py. Deliberately OUTSIDE JOB_ROOT, which gets individual
-    # job directories wiped by the TTL sweep; this one file lives for the
-    # life of the volume/container.
-    VISITOR_DB_PATH: Path = field(
-        default_factory=lambda: Path(
-            os.environ.get("VISITOR_DB_PATH") or Path(tempfile.gettempdir()) / "apk-builder-cache" / "visitors.db"
-        )
-    )
-
-    # Accounts + sessions — see app/auth.py. Same "outside JOB_ROOT, one
-    # file for the life of the volume/container" reasoning as
-    # VISITOR_DB_PATH above: this must survive the per-job TTL sweep.
-    AUTH_DB_PATH: Path = field(
-        default_factory=lambda: Path(
-            os.environ.get("AUTH_DB_PATH") or Path(tempfile.gettempdir()) / "apk-builder-cache" / "auth.db"
-        )
-    )
-
     # Frontend and API are served from this same service by default, so
     # cross-origin requests aren't the normal case here — kept available in
     # case the frontend is ever split out separately.
@@ -141,6 +122,39 @@ class Settings:
     # many distinct lockfile hashes have accumulated.
     DEP_CACHE_MAX_ENTRIES: int = field(default_factory=lambda: _env_int("DEP_CACHE_MAX_ENTRIES", 8))
 
+    # A proper (small) database for visitor/country analytics — SQLite,
+    # not another JSON blob: concurrent-safe writes via WAL mode, atomic
+    # upserts instead of read-modify-write-the-whole-file, and indexed
+    # COUNT/COUNT(DISTINCT) queries instead of scanning every record in
+    # Python on every request. See app/db.py. Deliberately alongside the
+    # caches above (not under JOB_ROOT, which per-job purge/TTL sweeps
+    # clean out) — persisted for as long as this container's volume lives.
+    VISITOR_DB_PATH: Path = field(
+        default_factory=lambda: Path(
+            os.environ.get("VISITOR_DB_PATH")
+            or Path(tempfile.gettempdir()) / "apk-builder-cache" / "visitors.db"
+        )
+    )
+    # Legacy pre-database store — if present at startup, its rows are
+    # imported into VISITOR_DB_PATH once (see app/db.py: migrate_legacy_json)
+    # and the file is then renamed aside, so nobody loses visitor history
+    # across the upgrade to a real database.
+    VISITOR_STORE_PATH: Path = field(
+        default_factory=lambda: Path(
+            os.environ.get("VISITOR_STORE_PATH")
+            or Path(tempfile.gettempdir()) / "apk-builder-cache" / "visitors.json"
+        )
+    )
+    # Free-tier IP geolocation lookup, used once per newly-seen IP (results
+    # are cached indefinitely in the database, never re-queried). Override
+    # to point at a self-hosted/paid resolver if this app runs somewhere
+    # that can't reach the public internet, or set to "" to disable country
+    # lookups entirely (visitors still get counted).
+    GEOIP_LOOKUP_URL: str = field(
+        default_factory=lambda: _env_str("GEOIP_LOOKUP_URL", "http://ip-api.com/json/{ip}?fields=status,countryCode")
+    )
+    GEOIP_TIMEOUT_S: float = field(default_factory=lambda: float(_env_str("GEOIP_TIMEOUT_S", "2.5")))
+
     # Real OOM prevention, not just a job-count ceiling — see
     # build_runner.py's pump().
     MIN_FREE_MEMORY_MB: int = field(default_factory=lambda: _env_int("MIN_FREE_MEMORY_MB", 512))
@@ -148,6 +162,18 @@ class Settings:
     APP_ID: str = field(default_factory=lambda: _env_str("APP_ID", "com.builder.app"))
     APP_NAME: str = field(default_factory=lambda: _env_str("APP_NAME", "MyApp"))
     CAPACITOR_MAJOR: str = field(default_factory=lambda: _env_str("CAPACITOR_MAJOR", "7"))
+
+    # Optional AI assistance for failed builds (see app/ai_assist.py + the
+    # POST /api/assist route) — a small chat panel that appears only when a
+    # build fails. Entirely opt-in: with no key set, the route answers with
+    # an honest "not configured" message instead of ever raising, so the
+    # rest of the site is completely unaffected either way.
+    AI_API_KEY: str | None = field(
+        default_factory=lambda: os.environ.get("AI_API_KEY") or os.environ.get("ANTHROPIC_API_KEY") or None
+    )
+    AI_MODEL: str = field(default_factory=lambda: _env_str("AI_MODEL", "claude-3-5-haiku-latest"))
+    AI_API_URL: str = field(default_factory=lambda: _env_str("AI_API_URL", "https://api.anthropic.com/v1/messages"))
+    AI_TIMEOUT_S: float = field(default_factory=lambda: float(_env_str("AI_TIMEOUT_S", "20")))
 
     @property
     def cors_origins(self) -> list[str]:

@@ -1,47 +1,19 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useRef, useState } from 'react';
 import Dropzone from './components/Dropzone.jsx';
 import JobTicket from './components/JobTicket.jsx';
 import ToastStack from './components/ToastStack.jsx';
-import PermissionsConfirmModal from './components/PermissionsConfirmModal.jsx';
 import SystemStatusBar from './components/SystemStatusBar.jsx';
-import Documentation from './components/Documentation.jsx';
-import ThemeSwitcher from './components/ThemeSwitcher.jsx';
+import StructureGuide from './components/StructureGuide.jsx';
+import PermissionsConfirmModal from './components/PermissionsConfirmModal.jsx';
+import ErrorAssistPanel from './components/ErrorAssistPanel.jsx';
+import SidePanel from './components/SidePanel.jsx';
 import VisitorStats from './components/VisitorStats.jsx';
-import XPBar from './components/XPBar.jsx';
-import Confetti from './components/Confetti.jsx';
-import AuthGate from './components/AuthGate.jsx';
-import { uploadZip, logout as apiLogout } from './api.js';
-import { getToken, getStoredEmail, setAuth, clearAuth } from './lib/auth.js';
-import { getStoredTheme, applyTheme } from './lib/theme.js';
-import { getProgress, recordUpload, recordBuildResult, recordDocsView, recordStructureView, levelForXp, BADGES } from './lib/gamification.js';
+import BrandMark from './components/BrandMark.jsx';
+import { uploadZip, askAssist } from './api.js';
 
 let nextTempId = 0;
 
 export default function App() {
-  const [authToken, setAuthToken] = useState(getToken);
-  const [authEmail, setAuthEmail] = useState(getStoredEmail);
-
-  function handleAuthenticated(token, email) {
-    setAuth(token, email);
-    setAuthToken(token);
-    setAuthEmail(email);
-  }
-
-  function handleLogout() {
-    apiLogout();
-    clearAuth();
-    setAuthToken('');
-    setAuthEmail('');
-  }
-
-  if (!authToken) {
-    return <AuthGate onAuthenticated={handleAuthenticated} />;
-  }
-
-  return <BuildFloor authEmail={authEmail} onLogout={handleLogout} />;
-}
-
-function BuildFloor({ authEmail, onLogout }) {
   // Each entry: { tempId, id, fileName, fileSize, status, error, queuePosition, downloadReady }
   // tempId exists from the moment a file is picked (client-side, before the
   // server has assigned a real job id) so the card can appear instantly
@@ -50,23 +22,22 @@ function BuildFloor({ authEmail, onLogout }) {
   const [jobs, setJobs] = useState([]);
   const [notices, setNotices] = useState([]);
   // Applies to whatever's uploaded next — chosen by the person building the
-  // app, never invented by the server (see components/PermissionsConfirmModal.jsx).
+  // app in the confirmation pop-up (components/PermissionsConfirmModal.jsx),
+  // never invented by the server.
   const [permissions, setPermissions] = useState([]);
-  const [docsOpen, setDocsOpen] = useState(false);
-  const [theme, setTheme] = useState(getStoredTheme);
-  const [progress, setProgress] = useState(getProgress);
-  const [confettiKey, setConfettiKey] = useState(0);
-  const confettiTimer = useRef(null);
-  const nextNoticeId = useRef(0);
-  const notifyAsked = useRef(false);
   // Files sit here from the moment they're picked/dropped until the
-  // permissions popup is confirmed — nothing is sent to the server and no
+  // permissions pop-up is confirmed — nothing is sent to the server and no
   // build starts before that confirmation.
   const [pendingFiles, setPendingFiles] = useState(null);
-
-  useEffect(() => {
-    applyTheme(theme);
-  }, [theme]);
+  // The right side panel (ErrorAssistPanel) only exists at all while this is
+  // set — it appears the moment a build fails and disappears when closed or
+  // when that ticket is dismissed. { id, tempId, fileName, error } | null
+  const [activeErrorJob, setActiveErrorJob] = useState(null);
+  const [assistMessages, setAssistMessages] = useState([]);
+  const [assistInput, setAssistInput] = useState('');
+  const [assistBusy, setAssistBusy] = useState(false);
+  const nextNoticeId = useRef(0);
+  const notifyAsked = useRef(false);
 
   const pushToast = useCallback((payload) => {
     nextNoticeId.current += 1;
@@ -77,47 +48,15 @@ function BuildFloor({ authEmail, onLogout }) {
     setNotices((prev) => prev.filter((n) => n.id !== id));
   }, []);
 
-  const celebrate = useCallback(() => {
-    setConfettiKey((k) => k + 1);
-    clearTimeout(confettiTimer.current);
-    confettiTimer.current = setTimeout(() => setConfettiKey(0), 1700);
-  }, []);
-
-  // Applies the result of any gamification event: updates the XP bar,
-  // and — only when something actually changed — surfaces a toast and a
-  // confetti burst so leveling up or a new badge feels like an event, not
-  // a silent number change buried in a collapsed panel.
-  const applyGameResult = useCallback((result) => {
-    if (!result) return;
-    setProgress(result.state);
-    if (result.leveledUp) {
-      pushToast({
-        level: 'success',
-        title: `Level up! Now level ${levelForXp(result.state.xp)}`,
-        message: 'Check the XP bar for your progress and badges.',
-      });
-      celebrate();
-    }
-    result.newBadges.forEach((id) => {
-      const badge = BADGES.find((b) => b.id === id);
-      if (badge) {
-        pushToast({ level: 'success', title: `Badge unlocked: ${badge.label}`, message: badge.desc });
-        celebrate();
-      }
-    });
-  }, [pushToast, celebrate]);
-
-  function openDocs() {
-    setDocsOpen(true);
-    applyGameResult(recordDocsView());
-  }
-
   function patchJob(tempId, patch) {
     setJobs((prev) => prev.map((j) => (j.tempId === tempId ? { ...j, ...patch } : j)));
   }
 
   function removeJob(tempId) {
     setJobs((prev) => prev.filter((j) => j.tempId !== tempId));
+    // Dismissing the ticket a chat is currently scoped to closes the panel
+    // too — nothing left for it to reference.
+    setActiveErrorJob((prev) => (prev && prev.tempId === tempId ? null : prev));
   }
 
   async function ensureNotifyPermission() {
@@ -134,8 +73,8 @@ function BuildFloor({ authEmail, onLogout }) {
   }
 
   // Called the instant files are picked/dropped — opens the permissions
-  // popup instead of uploading right away.
-  function handleFilesPicked(files) {
+  // pop-up instead of uploading right away.
+  function handleFilesSelected(files) {
     setPendingFiles(files);
   }
 
@@ -143,15 +82,13 @@ function BuildFloor({ authEmail, onLogout }) {
     setPendingFiles(null);
   }
 
-  // Called only once the popup's Confirm button is pressed — this is what
+  // Called only once the pop-up's Confirm button is pressed — this is what
   // actually starts the upload/build for the pending batch.
   function confirmPendingFiles() {
     const files = pendingFiles;
     setPendingFiles(null);
-    if (files && files.length > 0) startUploads(files);
-  }
+    if (!files || files.length === 0) return;
 
-  function startUploads(files) {
     ensureNotifyPermission();
     files.forEach((file) => {
       const tempId = `t${nextTempId++}`;
@@ -166,11 +103,9 @@ function BuildFloor({ authEmail, onLogout }) {
           error: null,
           queuePosition: null,
           downloadReady: false,
-          projectType: null,
         },
         ...prev,
       ]);
-      applyGameResult(recordUpload());
 
       uploadZip(file, permissions)
         .then((jobId) => patchJob(tempId, { id: jobId, status: 'validating' }))
@@ -181,17 +116,53 @@ function BuildFloor({ authEmail, onLogout }) {
     });
   }
 
-  function handleJobDone(tempId, fileName, status, error, projectType) {
+  function handleRejectedFile(message) {
+    pushToast({ level: 'warning', title: 'Not accepted', message });
+  }
+
+  function handleJobDone(tempId, fileName, status, error) {
     if (status === 'success') {
       pushToast({ level: 'success', title: 'Build complete', message: `${fileName} is ready to download.` });
       notifyBrowser('Build complete', `${fileName} is ready to download.`);
-      celebrate();
     } else {
       const message = error || `${fileName} failed to build.`;
       pushToast({ level: 'error', title: 'Build failed', message });
       notifyBrowser('Build failed', message);
+      // Surface the AI-assist panel for this failure automatically — the
+      // whole point is not having to go looking for it.
+      const job = jobs.find((j) => j.tempId === tempId);
+      if (job) openAssistFor({ ...job, error: message });
     }
-    applyGameResult(recordBuildResult(status, projectType));
+  }
+
+  // Opens (or re-opens) the AI-assist panel scoped to one specific failed
+  // job — called both automatically on failure above, and from the "Ask AI
+  // about this" button on any already-failed ticket (see JobTicket.jsx).
+  function openAssistFor(job) {
+    setActiveErrorJob({ id: job.id, tempId: job.tempId, fileName: job.fileName, error: job.error });
+    setAssistMessages([]);
+    setAssistInput('');
+  }
+
+  function closeAssistPanel() {
+    setActiveErrorJob(null);
+  }
+
+  async function sendAssistQuestion() {
+    const question = assistInput.trim();
+    if (!question || !activeErrorJob || assistBusy) return;
+
+    setAssistMessages((prev) => [...prev, { role: 'user', text: question }]);
+    setAssistInput('');
+    setAssistBusy(true);
+    try {
+      const { answer, aiAvailable } = await askAssist(activeErrorJob.id, question);
+      setAssistMessages((prev) => [...prev, { role: 'assistant', text: answer, aiAvailable }]);
+    } catch (err) {
+      setAssistMessages((prev) => [...prev, { role: 'assistant', text: err.message, aiAvailable: false }]);
+    } finally {
+      setAssistBusy(false);
+    }
   }
 
   const counts = jobs.reduce(
@@ -206,93 +177,100 @@ function BuildFloor({ authEmail, onLogout }) {
   );
 
   return (
-    <main className="app-shell">
-      <ToastStack notices={notices} onDismiss={dismissToast} />
-      {confettiKey > 0 && <Confetti key={confettiKey} />}
+    <div className="app-frame">
+      <div className="app-layout">
+        <ToastStack notices={notices} onDismiss={dismissToast} />
 
-      <header className="floor-header">
-        <div className="eyebrow-row">
-          <div className="eyebrow"><span className="dot" />apk-builder — build floor</div>
-          <div className="header-controls">
-            <ThemeSwitcher theme={theme} onChange={setTheme} />
-            <button type="button" className="docs-link" onClick={openDocs}>
-              <span aria-hidden="true">📄</span> File structure docs
-            </button>
-            {authEmail && <span className="ticket-size" title={authEmail}>{authEmail}</span>}
-            <button type="button" className="logout-link" onClick={onLogout}>Log out</button>
-          </div>
-        </div>
-        <h1>Turn React, Kotlin, or Java projects into APKs, all at once</h1>
-        <p className="sub">
-          Drop in as many project archives as you like — a React/Vite web project (Capacitor) or a
-          native Kotlin/Java Android project both work, each in its own disposable container.{' '}
-          <button type="button" className="inline-link" onClick={openDocs}>
-            See the required layout →
-          </button>
-        </p>
+        <aside className="side-panel side-panel-left hide-scrollbar" aria-label="Project structure guide">
+          <SidePanel title="Project structure guide">
+            <StructureGuide />
+          </SidePanel>
+        </aside>
 
-        <VisitorStats />
-      </header>
+        <div className="center-scroll hide-scrollbar">
+          <main className="app-shell">
+            <header className="floor-header">
+              <div className="eyebrow"><BrandMark />apkit<span className="eyebrow-sep">·</span>build floor</div>
+              <h1>Turn React, Kotlin, or Java projects into APKs, all at once</h1>
+              <p className="sub">
+                Drop in a React/Vite web project (built via Capacitor) or a native Kotlin/Java
+                Android project (built directly with its own Gradle wrapper) — each runs in its
+                own isolated, disposable container with a pre-configured Android SDK.
+              </p>
+              <VisitorStats />
+            </header>
 
-      <Documentation open={docsOpen} onClose={() => setDocsOpen(false)} />
+            <SystemStatusBar />
 
-      <XPBar progress={progress} />
+            <Dropzone onFilesSelected={handleFilesSelected} onReject={handleRejectedFile} />
 
-      <SystemStatusBar />
-
-      <Dropzone onFilesSelected={handleFilesPicked} />
-
-      <PermissionsConfirmModal
-        open={pendingFiles !== null}
-        files={pendingFiles || []}
-        selected={permissions}
-        onChange={setPermissions}
-        onCancel={cancelPendingFiles}
-        onConfirm={confirmPendingFiles}
-      />
-
-      {jobs.length > 0 && (
-        <div className="stats-bar" aria-label="Build floor summary">
-          <Stat value={counts.building} label="building" tone="active" />
-          <Stat value={counts.queued} label="waiting" tone="queued" />
-          <Stat value={counts.done} label="done" tone="done" />
-          {counts.failed > 0 && <Stat value={counts.failed} label="failed" tone="failed" />}
-        </div>
-      )}
-
-      <div className="ticket-list">
-        {jobs.length === 0 ? (
-          <div className="empty-floor">
-            <div className="empty-floor-glyph" aria-hidden="true">
-              <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-                <rect x="3.5" y="5.5" width="17" height="13" rx="1.5" stroke="currentColor" strokeWidth="1.4" />
-                <path d="M3.5 9.5h17" stroke="currentColor" strokeWidth="1.4" />
-                <path d="M7 7.2h.01M9.4 7.2h.01" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
-              </svg>
-            </div>
-            <div className="empty-floor-title">The floor is empty</div>
-            <div className="empty-floor-sub">Drop a project above to start your first build.</div>
-          </div>
-        ) : (
-          jobs.map((job) => (
-            <JobTicket
-              key={job.tempId}
-              job={job}
-              onUpdate={(patch) => patchJob(job.tempId, patch)}
-              onDone={(status, error) => handleJobDone(job.tempId, job.fileName, status, error, job.projectType)}
-              onNotice={pushToast}
-              onRemove={() => removeJob(job.tempId)}
-              onStructureExpand={() => applyGameResult(recordStructureView())}
+            <PermissionsConfirmModal
+              open={pendingFiles !== null}
+              files={pendingFiles || []}
+              selected={permissions}
+              onChange={setPermissions}
+              onCancel={cancelPendingFiles}
+              onConfirm={confirmPendingFiles}
             />
-          ))
+
+            {jobs.length > 0 && (
+              <div className="stats-bar" aria-label="Build floor summary">
+                <Stat value={counts.building} label="building" tone="active" />
+                <Stat value={counts.queued} label="waiting" tone="queued" />
+                <Stat value={counts.done} label="done" tone="done" />
+                {counts.failed > 0 && <Stat value={counts.failed} label="failed" tone="failed" />}
+              </div>
+            )}
+
+            <div className="ticket-list hide-scrollbar">
+              {jobs.length === 0 ? (
+                <div className="empty-floor">
+                  <div className="empty-floor-glyph" aria-hidden="true">
+                    <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                      <rect x="3.5" y="5.5" width="17" height="13" rx="1.5" stroke="currentColor" strokeWidth="1.4" />
+                      <path d="M3.5 9.5h17" stroke="currentColor" strokeWidth="1.4" />
+                      <path d="M7 7.2h.01M9.4 7.2h.01" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
+                    </svg>
+                  </div>
+                  <div className="empty-floor-title">The floor is empty</div>
+                  <div className="empty-floor-sub">Drop a project above to start your first build.</div>
+                </div>
+              ) : (
+                jobs.map((job) => (
+                  <JobTicket
+                    key={job.tempId}
+                    job={job}
+                    onUpdate={(patch) => patchJob(job.tempId, patch)}
+                    onDone={(status, error) => handleJobDone(job.tempId, job.fileName, status, error)}
+                    onNotice={pushToast}
+                    onRemove={() => removeJob(job.tempId)}
+                    onAskAI={openAssistFor}
+                  />
+                ))
+              )}
+            </div>
+
+            <footer className="app-footer">
+              Builds run with capped CPU/memory in ephemeral containers, destroyed after each job.
+            </footer>
+          </main>
+        </div>
+
+        {activeErrorJob && (
+          <aside className="side-panel side-panel-right hide-scrollbar" aria-label="AI build assistant">
+            <ErrorAssistPanel
+              job={activeErrorJob}
+              messages={assistMessages}
+              input={assistInput}
+              onInputChange={setAssistInput}
+              onSend={sendAssistQuestion}
+              busy={assistBusy}
+              onClose={closeAssistPanel}
+            />
+          </aside>
         )}
       </div>
-
-      <footer className="app-footer">
-        Builds run with capped CPU/memory in ephemeral containers, destroyed after each job. ·{' '}
-        <button type="button" className="inline-link" onClick={openDocs}>File structure docs</button>
-      </footer>
-    </main>
+    </div>
   );
 }
 
