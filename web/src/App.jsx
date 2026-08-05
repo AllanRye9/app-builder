@@ -1,43 +1,118 @@
-import { useCallback, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import Dropzone from './components/Dropzone.jsx';
 import JobTicket from './components/JobTicket.jsx';
 import ToastStack from './components/ToastStack.jsx';
 import SystemStatusBar from './components/SystemStatusBar.jsx';
-import StructureGuide from './components/StructureGuide.jsx';
+import Sidebar from './components/Sidebar.jsx';
+import ThemeSwitcher from './components/ThemeSwitcher.jsx';
+import ErrorAssistant from './components/ErrorAssistant.jsx';
 import PermissionsConfirmModal from './components/PermissionsConfirmModal.jsx';
-import ErrorAssistPanel from './components/ErrorAssistPanel.jsx';
-import SidePanel from './components/SidePanel.jsx';
-import VisitorStats from './components/VisitorStats.jsx';
+import IntroModal from './components/IntroModal.jsx';
+import AuthScreen from './components/AuthScreen.jsx';
 import BrandMark from './components/BrandMark.jsx';
-import { uploadZip, askAssist } from './api.js';
+import VisitorStats from './components/VisitorStats.jsx';
+import { uploadZip, fetchMe, logout as apiLogout } from './api.js';
+import { getToken, setToken, clearToken } from './lib/auth.js';
+import { getStoredTheme, applyTheme } from './lib/theme.js';
 
 let nextTempId = 0;
 
+const SIDEBAR_COLLAPSED_KEY = 'apkit:sidebarCollapsed';
+const INTRO_SEEN_KEY = 'apkit:introSeen';
+
 export default function App() {
+  const [authState, setAuthState] = useState('checking'); // 'checking' | 'signedOut' | 'signedIn'
+  const [user, setUser] = useState(null);
+
+  useEffect(() => {
+    const token = getToken();
+    if (!token) {
+      setAuthState('signedOut');
+      return;
+    }
+    fetchMe()
+      .then((u) => { setUser(u); setAuthState('signedIn'); })
+      .catch(() => { clearToken(); setAuthState('signedOut'); });
+  }, []);
+
+  function handleAuthenticated(token, authedUser) {
+    setToken(token);
+    setUser(authedUser);
+    setAuthState('signedIn');
+  }
+
+  function handleLogout() {
+    apiLogout();
+    clearToken();
+    setUser(null);
+    setAuthState('signedOut');
+  }
+
+  if (authState === 'checking') {
+    return (
+      <div className="auth-frame">
+        <div className="auth-checking" aria-live="polite">Checking your session…</div>
+      </div>
+    );
+  }
+
+  if (authState === 'signedOut') {
+    return <AuthScreen onAuthenticated={handleAuthenticated} />;
+  }
+
+  return <Dashboard user={user} onLogout={handleLogout} />;
+}
+
+function Dashboard({ user, onLogout }) {
   // Each entry: { tempId, id, fileName, fileSize, status, error, queuePosition, downloadReady }
   // tempId exists from the moment a file is picked (client-side, before the
   // server has assigned a real job id) so the card can appear instantly
-  // while the upload is still in flight — the whole point of a
-  // multi-tasking dashboard is that starting build #2 never waits on #1.
+  // while the upload is still in flight.
   const [jobs, setJobs] = useState([]);
   const [notices, setNotices] = useState([]);
-  // Applies to whatever's uploaded next — chosen by the person building the
-  // app in the confirmation pop-up (components/PermissionsConfirmModal.jsx),
-  // never invented by the server.
+  // Chosen in the confirm modal (see PermissionsConfirmModal.jsx) — carried
+  // over as the default for the next batch, but never applied to anything
+  // until that batch is explicitly confirmed.
   const [permissions, setPermissions] = useState([]);
-  // Files sit here from the moment they're picked/dropped until the
-  // permissions pop-up is confirmed — nothing is sent to the server and no
-  // build starts before that confirmation.
-  const [pendingFiles, setPendingFiles] = useState(null);
-  // The right side panel (ErrorAssistPanel) only exists at all while this is
-  // set — it appears the moment a build fails and disappears when closed or
-  // when that ticket is dismissed. { id, tempId, fileName, error } | null
-  const [activeErrorJob, setActiveErrorJob] = useState(null);
-  const [assistMessages, setAssistMessages] = useState([]);
-  const [assistInput, setAssistInput] = useState('');
-  const [assistBusy, setAssistBusy] = useState(false);
+  // Files staged after a drop/pick, waiting on the confirm modal — nothing
+  // is uploaded until handleConfirmPending runs.
+  const [pendingFiles, setPendingFiles] = useState([]);
+  // The most recent build failure / rejected upload — drives whether the
+  // right-hand error-assistant panel exists at all.
+  const [errorContext, setErrorContext] = useState(null);
+
+  const [collapsed, setCollapsed] = useState(() => {
+    try { return localStorage.getItem(SIDEBAR_COLLAPSED_KEY) === '1'; } catch { return false; }
+  });
+  const [section, setSection] = useState('floor');
+  const [theme, setTheme] = useState(getStoredTheme);
+  const [showIntro, setShowIntro] = useState(() => {
+    try { return localStorage.getItem(INTRO_SEEN_KEY) !== '1'; } catch { return true; }
+  });
+
   const nextNoticeId = useRef(0);
   const notifyAsked = useRef(false);
+
+  useEffect(() => {
+    applyTheme(theme);
+  }, [theme]);
+
+  function toggleCollapsed() {
+    setCollapsed((c) => {
+      const next = !c;
+      try { localStorage.setItem(SIDEBAR_COLLAPSED_KEY, next ? '1' : '0'); } catch { /* ignore */ }
+      return next;
+    });
+  }
+
+  function dismissIntro() {
+    setShowIntro(false);
+    try { localStorage.setItem(INTRO_SEEN_KEY, '1'); } catch { /* ignore */ }
+  }
+
+  function replayIntro() {
+    setShowIntro(true);
+  }
 
   const pushToast = useCallback((payload) => {
     nextNoticeId.current += 1;
@@ -48,16 +123,17 @@ export default function App() {
     setNotices((prev) => prev.filter((n) => n.id !== id));
   }, []);
 
-  function patchJob(tempId, patch) {
+  // useCallback (stable identity across renders, since setJobs itself never
+  // changes) so JobTicket's props stay referentially stable and its
+  // React.memo actually prevents re-rendering every other ticket whenever
+  // one job updates — see JobTicket.jsx.
+  const patchJob = useCallback((tempId, patch) => {
     setJobs((prev) => prev.map((j) => (j.tempId === tempId ? { ...j, ...patch } : j)));
-  }
+  }, []);
 
-  function removeJob(tempId) {
+  const removeJob = useCallback((tempId) => {
     setJobs((prev) => prev.filter((j) => j.tempId !== tempId));
-    // Dismissing the ticket a chat is currently scoped to closes the panel
-    // too — nothing left for it to reference.
-    setActiveErrorJob((prev) => (prev && prev.tempId === tempId ? null : prev));
-  }
+  }, []);
 
   async function ensureNotifyPermission() {
     if (notifyAsked.current) return;
@@ -72,24 +148,22 @@ export default function App() {
     }
   }
 
-  // Called the instant files are picked/dropped — opens the permissions
-  // pop-up instead of uploading right away.
+  // Staging step: a drop/pick no longer uploads anything by itself — it
+  // just opens the permissions confirm modal. Nothing reaches the server
+  // until handleConfirmPending runs.
   function handleFilesSelected(files) {
     setPendingFiles(files);
   }
 
-  function cancelPendingFiles() {
-    setPendingFiles(null);
+  function handleCancelPending() {
+    setPendingFiles([]);
   }
 
-  // Called only once the pop-up's Confirm button is pressed — this is what
-  // actually starts the upload/build for the pending batch.
-  function confirmPendingFiles() {
+  function handleConfirmPending() {
     const files = pendingFiles;
-    setPendingFiles(null);
-    if (!files || files.length === 0) return;
-
+    setPendingFiles([]);
     ensureNotifyPermission();
+
     files.forEach((file) => {
       const tempId = `t${nextTempId++}`;
       setJobs((prev) => [
@@ -112,6 +186,7 @@ export default function App() {
         .catch((err) => {
           patchJob(tempId, { status: 'failed', error: err.message });
           pushToast({ level: 'error', title: `${file.name} rejected`, message: err.message });
+          setErrorContext({ fileName: file.name, errorMessage: err.message, logTail: [] });
         });
     });
   }
@@ -120,7 +195,7 @@ export default function App() {
     pushToast({ level: 'warning', title: 'Not accepted', message });
   }
 
-  function handleJobDone(tempId, fileName, status, error) {
+  const handleJobDone = useCallback((tempId, fileName, status, error, logTail) => {
     if (status === 'success') {
       pushToast({ level: 'success', title: 'Build complete', message: `${fileName} is ready to download.` });
       notifyBrowser('Build complete', `${fileName} is ready to download.`);
@@ -128,42 +203,9 @@ export default function App() {
       const message = error || `${fileName} failed to build.`;
       pushToast({ level: 'error', title: 'Build failed', message });
       notifyBrowser('Build failed', message);
-      // Surface the AI-assist panel for this failure automatically — the
-      // whole point is not having to go looking for it.
-      const job = jobs.find((j) => j.tempId === tempId);
-      if (job) openAssistFor({ ...job, error: message });
+      setErrorContext({ fileName, errorMessage: message, logTail: logTail || [] });
     }
-  }
-
-  // Opens (or re-opens) the AI-assist panel scoped to one specific failed
-  // job — called both automatically on failure above, and from the "Ask AI
-  // about this" button on any already-failed ticket (see JobTicket.jsx).
-  function openAssistFor(job) {
-    setActiveErrorJob({ id: job.id, tempId: job.tempId, fileName: job.fileName, error: job.error });
-    setAssistMessages([]);
-    setAssistInput('');
-  }
-
-  function closeAssistPanel() {
-    setActiveErrorJob(null);
-  }
-
-  async function sendAssistQuestion() {
-    const question = assistInput.trim();
-    if (!question || !activeErrorJob || assistBusy) return;
-
-    setAssistMessages((prev) => [...prev, { role: 'user', text: question }]);
-    setAssistInput('');
-    setAssistBusy(true);
-    try {
-      const { answer, aiAvailable } = await askAssist(activeErrorJob.id, question);
-      setAssistMessages((prev) => [...prev, { role: 'assistant', text: answer, aiAvailable }]);
-    } catch (err) {
-      setAssistMessages((prev) => [...prev, { role: 'assistant', text: err.message, aiAvailable: false }]);
-    } finally {
-      setAssistBusy(false);
-    }
-  }
+  }, [pushToast]);
 
   const counts = jobs.reduce(
     (acc, j) => {
@@ -181,16 +223,25 @@ export default function App() {
       <div className="app-layout">
         <ToastStack notices={notices} onDismiss={dismissToast} />
 
-        <aside className="side-panel side-panel-left hide-scrollbar" aria-label="Project structure guide">
-          <SidePanel title="Project structure guide">
-            <StructureGuide />
-          </SidePanel>
-        </aside>
+        <Sidebar
+          collapsed={collapsed}
+          onToggleCollapsed={toggleCollapsed}
+          section={section}
+          onSelectSection={setSection}
+          user={user}
+          onLogout={onLogout}
+          theme={theme}
+          onThemeChange={setTheme}
+          onReplayIntro={replayIntro}
+        />
 
         <div className="center-scroll hide-scrollbar">
           <main className="app-shell">
             <header className="floor-header">
-              <div className="eyebrow"><BrandMark />apkit<span className="eyebrow-sep">·</span>build floor</div>
+              <div className="eyebrow-row">
+                <div className="eyebrow"><BrandMark />apkit<span className="eyebrow-sep">·</span>build floor</div>
+                <ThemeSwitcher theme={theme} onChange={setTheme} compact />
+              </div>
               <h1>Turn React, Kotlin, or Java projects into APKs, all at once</h1>
               <p className="sub">
                 Drop in a React/Vite web project (built via Capacitor) or a native Kotlin/Java
@@ -203,15 +254,6 @@ export default function App() {
             <SystemStatusBar />
 
             <Dropzone onFilesSelected={handleFilesSelected} onReject={handleRejectedFile} />
-
-            <PermissionsConfirmModal
-              open={pendingFiles !== null}
-              files={pendingFiles || []}
-              selected={permissions}
-              onChange={setPermissions}
-              onCancel={cancelPendingFiles}
-              onConfirm={confirmPendingFiles}
-            />
 
             {jobs.length > 0 && (
               <div className="stats-bar" aria-label="Build floor summary">
@@ -240,11 +282,10 @@ export default function App() {
                   <JobTicket
                     key={job.tempId}
                     job={job}
-                    onUpdate={(patch) => patchJob(job.tempId, patch)}
-                    onDone={(status, error) => handleJobDone(job.tempId, job.fileName, status, error)}
+                    onUpdate={patchJob}
+                    onDone={handleJobDone}
                     onNotice={pushToast}
-                    onRemove={() => removeJob(job.tempId)}
-                    onAskAI={openAssistFor}
+                    onRemove={removeJob}
                   />
                 ))
               )}
@@ -256,20 +297,18 @@ export default function App() {
           </main>
         </div>
 
-        {activeErrorJob && (
-          <aside className="side-panel side-panel-right hide-scrollbar" aria-label="AI build assistant">
-            <ErrorAssistPanel
-              job={activeErrorJob}
-              messages={assistMessages}
-              input={assistInput}
-              onInputChange={setAssistInput}
-              onSend={sendAssistQuestion}
-              busy={assistBusy}
-              onClose={closeAssistPanel}
-            />
-          </aside>
-        )}
+        <ErrorAssistant errorContext={errorContext} onDismiss={() => setErrorContext(null)} />
       </div>
+
+      <PermissionsConfirmModal
+        files={pendingFiles}
+        selected={permissions}
+        onChange={setPermissions}
+        onConfirm={handleConfirmPending}
+        onCancel={handleCancelPending}
+      />
+
+      <IntroModal open={showIntro} onClose={dismissIntro} />
     </div>
   );
 }

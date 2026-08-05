@@ -24,6 +24,7 @@ from starlette.middleware.cors import CORSMiddleware
 from .config import settings
 from .job_store import ttl_sweep_loop
 from .routes import rate_limit_sweep_loop, router
+from .auth_routes import router as auth_router
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 logger = logging.getLogger("apk-builder")
@@ -105,6 +106,7 @@ async def unhandled_exception_handler(_request: Request, exc: Exception) -> JSON
 
 
 app.include_router(router, prefix="/api")
+app.include_router(auth_router, prefix="/api/auth")
 
 # Mounted last so it doesn't shadow /api/* — serves the built React
 # dashboard if present (it's fine for this to be absent in a dev

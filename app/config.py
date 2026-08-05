@@ -155,6 +155,26 @@ class Settings:
     )
     GEOIP_TIMEOUT_S: float = field(default_factory=lambda: float(_env_str("GEOIP_TIMEOUT_S", "2.5")))
 
+    # Accounts + sessions (app/auth.py) — a small SQLite file, same pattern
+    # as VISITOR_DB_PATH above. Sign-in is required for the whole site (see
+    # routes.py's require_auth dependency), not just the build endpoints.
+    AUTH_DB_PATH: Path = field(
+        default_factory=lambda: Path(
+            os.environ.get("AUTH_DB_PATH") or Path(tempfile.gettempdir()) / "apk-builder-cache" / "auth.db"
+        )
+    )
+    # How long a signed-in session stays valid without the person having to
+    # log in again. 30 days by default — this is a build tool, not a bank.
+    SESSION_TTL_MS: int = field(default_factory=lambda: _env_int("SESSION_TTL_MS", 30 * 24 * 60 * 60 * 1000))
+
+    # Optional AI-assisted troubleshooting for the error side panel (see
+    # app/assist.py). Talks directly to the Anthropic Messages API over
+    # httpx (already a dependency — no SDK needed for one endpoint). Unset
+    # by default: the site works fully without it, just with the built-in
+    # rule-based fallback instead of a model-generated answer.
+    ANTHROPIC_API_KEY: str = field(default_factory=lambda: _env_str("ANTHROPIC_API_KEY", ""))
+    ASSIST_MODEL: str = field(default_factory=lambda: _env_str("ASSIST_MODEL", "claude-haiku-4-5-20251001"))
+
     # Real OOM prevention, not just a job-count ceiling — see
     # build_runner.py's pump().
     MIN_FREE_MEMORY_MB: int = field(default_factory=lambda: _env_int("MIN_FREE_MEMORY_MB", 512))
@@ -162,18 +182,6 @@ class Settings:
     APP_ID: str = field(default_factory=lambda: _env_str("APP_ID", "com.builder.app"))
     APP_NAME: str = field(default_factory=lambda: _env_str("APP_NAME", "MyApp"))
     CAPACITOR_MAJOR: str = field(default_factory=lambda: _env_str("CAPACITOR_MAJOR", "7"))
-
-    # Optional AI assistance for failed builds (see app/ai_assist.py + the
-    # POST /api/assist route) — a small chat panel that appears only when a
-    # build fails. Entirely opt-in: with no key set, the route answers with
-    # an honest "not configured" message instead of ever raising, so the
-    # rest of the site is completely unaffected either way.
-    AI_API_KEY: str | None = field(
-        default_factory=lambda: os.environ.get("AI_API_KEY") or os.environ.get("ANTHROPIC_API_KEY") or None
-    )
-    AI_MODEL: str = field(default_factory=lambda: _env_str("AI_MODEL", "claude-3-5-haiku-latest"))
-    AI_API_URL: str = field(default_factory=lambda: _env_str("AI_API_URL", "https://api.anthropic.com/v1/messages"))
-    AI_TIMEOUT_S: float = field(default_factory=lambda: float(_env_str("AI_TIMEOUT_S", "20")))
 
     @property
     def cors_origins(self) -> list[str]:

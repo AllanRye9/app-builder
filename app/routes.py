@@ -12,16 +12,18 @@ import time
 from pathlib import Path
 
 import psutil
-from fastapi import APIRouter, BackgroundTasks, Form, HTTPException, Request, UploadFile
+from fastapi import APIRouter, BackgroundTasks, Depends, Form, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
+from pydantic import BaseModel
 
 from . import build_runner
-from . import ai_assist
 from .config import settings
 from .job_store import bus, create_job, jobs, log, notice, purge_job, set_status
 from .permissions import sanitize_permissions
 from .validate import ValidationError, validate_and_extract
 from . import visitors
+from . import auth
+from . import assist
 
 router = APIRouter()
 
@@ -76,40 +78,6 @@ async def rate_limit_sweep_loop() -> None:
                 _upload_hits[ip] = kept
             else:
                 _upload_hits.pop(ip, None)
-        for ip in list(_assist_hits.keys()):
-            kept = [t for t in _assist_hits[ip] if t > window_start]
-            if kept:
-                _assist_hits[ip] = kept
-            else:
-                _assist_hits.pop(ip, None)
-
-
-# Separate (looser) limiter for the AI-assist endpoint below — a question
-# is far cheaper than a build, but an unauthenticated free-text endpoint
-# that calls a paid third-party API still needs its own guard rather than
-# sharing the upload endpoint's budget.
-_assist_hits: dict[str, list[float]] = {}
-_ASSIST_RATE_LIMIT_MAX = 20
-_ASSIST_RATE_LIMIT_WINDOW_MS = 10 * 60 * 1000
-
-
-def _check_assist_rate_limit(request: Request) -> None:
-    ip = _client_ip(request)
-    now = time.time()
-    window_start = now - _ASSIST_RATE_LIMIT_WINDOW_MS / 1000
-
-    hits = [t for t in _assist_hits.get(ip, []) if t > window_start]
-
-    if len(hits) >= _ASSIST_RATE_LIMIT_MAX:
-        retry_after_s = hits[0] + _ASSIST_RATE_LIMIT_WINDOW_MS / 1000 - now
-        raise HTTPException(
-            status_code=429,
-            detail=f"Too many questions from this connection. Try again in {int(retry_after_s / 60) + 1} min.",
-            headers={"Retry-After": str(max(1, round(retry_after_s)))},
-        )
-
-    hits.append(now)
-    _assist_hits[ip] = hits
 
 
 # ---------------------------------------------------------------------------
@@ -126,60 +94,8 @@ async def health() -> dict:
     return {"ok": True}
 
 
-@router.post("/assist")
-async def assist(request: Request) -> dict:
-    """Answers a question about a *failed* job's error/log context, using
-    the configured AI provider if there is one. With no AI_API_KEY set,
-    this still returns a normal 200 with a plain explanatory message
-    (aiAvailable: false) rather than an error — the panel that calls this
-    stays usable either way, it just can't generate a tailored answer
-    without a key.
-    """
-    _check_assist_rate_limit(request)
-    body = await request.json()
-    job_id = str(body.get("jobId") or "")
-    question = str(body.get("question") or "").strip()
-
-    if not question:
-        raise HTTPException(status_code=400, detail="Ask a question first.")
-    if len(question) > ai_assist.MAX_QUESTION_LEN:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Keep questions under {ai_assist.MAX_QUESTION_LEN} characters.",
-        )
-
-    job = jobs.get(job_id)
-    if job is None:
-        raise HTTPException(status_code=404, detail="That build no longer exists.")
-    if job.status != "failed":
-        raise HTTPException(status_code=400, detail="AI assistance is only available for a failed build.")
-
-    if not ai_assist.is_configured():
-        return {
-            "answer": (
-                "AI assistance isn't configured on this server (no AI_API_KEY set), so I "
-                "can't generate a tailored answer here — the error message and full build "
-                "log above are still the best source of truth for this failure."
-            ),
-            "aiAvailable": False,
-        }
-
-    try:
-        answer = await ai_assist.ask(
-            question=question,
-            filename=job.filename,
-            project_type=job.project_type,
-            error=job.error,
-            logs=job.logs,
-        )
-    except ai_assist.AssistError as exc:
-        raise HTTPException(status_code=502, detail=str(exc)) from exc
-
-    return {"answer": answer, "aiAvailable": True}
-
-
 @router.get("/system")
-async def system_status() -> dict:
+async def system_status(user: auth.User = Depends(auth.require_auth)) -> dict:
     """Powers the dashboard's global status bar — a standardized,
     always-visible read on the container's real capacity, so "why is my
     build not starting yet" has a visible answer instead of a silent queue.
@@ -225,7 +141,7 @@ async def _save_upload(file: UploadFile, dest_path: Path) -> int:
 
 
 @router.post("/visitors/ping")
-async def visitors_ping(request: Request) -> dict:
+async def visitors_ping(request: Request, user: auth.User = Depends(auth.require_auth)) -> dict:
     """Called once per dashboard load (see web/src/api.js). Records this
     visitor if their IP hasn't been seen before (or refreshes their
     "last seen" date if it has) and returns the current totals in the
@@ -235,11 +151,26 @@ async def visitors_ping(request: Request) -> dict:
 
 
 @router.get("/visitors/stats")
-async def visitors_stats() -> dict:
+async def visitors_stats(user: auth.User = Depends(auth.require_auth)) -> dict:
     """Read-only refresh for the standing counter in the UI — does not
     itself count as a visit.
     """
     return await visitors.get_stats()
+
+
+class AssistRequest(BaseModel):
+    question: str
+    context: dict | None = None
+    history: list[dict] | None = None
+
+
+@router.post("/assist")
+async def assist_endpoint(body: AssistRequest, user: auth.User = Depends(auth.require_auth)) -> dict:
+    """Powers the error side panel (web/src/components/ErrorAssistant.jsx).
+    Only ever reachable once signed in, same as everything else here —
+    see assist.py for the AI/fallback split.
+    """
+    return await assist.answer(body.question, body.context or {}, body.history or [])
 
 
 
@@ -248,6 +179,7 @@ async def upload(
     request: Request,
     zip: UploadFile | None = None,
     permissions: str | None = Form(default=None),
+    user: auth.User = Depends(auth.require_auth),
 ) -> JSONResponse:
     _check_rate_limit(request)
 
@@ -317,7 +249,7 @@ async def upload(
 
 
 @router.get("/status/{job_id}")
-async def get_status(job_id: str) -> dict:
+async def get_status(job_id: str, user: auth.User = Depends(auth.require_auth)) -> dict:
     job = jobs.get(job_id)
     if job is None:
         raise HTTPException(status_code=404, detail="Unknown job id.")
@@ -343,7 +275,7 @@ def _sse(event: str | None, data: object) -> str:
 
 
 @router.get("/logs/{job_id}/stream")
-async def stream_logs(job_id: str, request: Request) -> StreamingResponse:
+async def stream_logs(job_id: str, request: Request, user: auth.User = Depends(auth.require_auth)) -> StreamingResponse:
     job = jobs.get(job_id)
     if job is None:
         raise HTTPException(status_code=404)
@@ -397,7 +329,7 @@ async def stream_logs(job_id: str, request: Request) -> StreamingResponse:
 
 
 @router.get("/download/{job_id}")
-async def download(job_id: str, background_tasks: BackgroundTasks):
+async def download(job_id: str, background_tasks: BackgroundTasks, user: auth.User = Depends(auth.require_auth)):
     job = jobs.get(job_id)
     if job is None:
         raise HTTPException(status_code=404, detail="Unknown job id.")
