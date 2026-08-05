@@ -25,7 +25,11 @@ const MAX_RENDERED_ENTRIES = 400;
 
 function flagFor(name, depth, isDir) {
   if (isDir && depth === 0 && FORBIDDEN_TOP_LEVEL.has(name.toLowerCase())) return 'forbidden';
-  if (!isDir && depth <= 1 && ROOT_MARKERS.has(name)) return 'marker';
+  // Root markers are searched for anywhere in the archive, not just at
+  // the top level — the server (validate.py's _locate_project_root) does
+  // the same, in case the project is nested a folder or two deep. This
+  // preview just needs to agree with that so it doesn't warn falsely.
+  if (!isDir && ROOT_MARKERS.has(name)) return 'marker';
   if (!isDir && WRAPPER_FILES.has(name)) return 'wrapper';
   return null;
 }
