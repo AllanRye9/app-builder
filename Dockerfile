@@ -15,9 +15,9 @@ RUN npm run build
 # ---------------------------------------------------------------------------
 # Same rationale as before: one container, one process, no Docker socket, no
 # platform-specific glue. The server itself is now Python/FastAPI
-# (app/build_runner.py), but it still shells out to `npm`/`npx`/`gradlew` as
-# direct subprocesses to build uploaded projects — so Node stays in this
-# image alongside Python.
+# (app/build_runner.py), but it still shells out to `npm`/`npx`/`gradlew`/
+# `flutter` as direct subprocesses to build uploaded projects — so Node and
+# Flutter stay in this image alongside Python.
 FROM eclipse-temurin:21-jdk-jammy AS jdk
 
 FROM node:22-bookworm-slim AS app
@@ -26,6 +26,7 @@ FROM node:22-bookworm-slim AS app
 # binaries require glibc and don't run correctly against musl.
 RUN apt-get update && apt-get install -y --no-install-recommends \
     unzip \
+    xz-utils \
     curl \
     ca-certificates \
     git \
@@ -77,6 +78,27 @@ RUN set -e && \
       "platforms;android-35" "build-tools;35.0.0" \
       > /dev/null && \
     yes | sdkmanager --licenses > /dev/null
+
+# Flutter/Dart SDK. A Flutter upload's `flutter build apk` drives the same
+# JDK + Android SDK set up above via its own embedded Gradle project — this
+# only adds the `flutter`/`dart` CLIs themselves on top. Pinned to a
+# specific stable release rather than letting "stable" float, for the same
+# reproducible-image-build reason CMDLINE_TOOLS_VERSION is pinned above.
+# Check https://docs.flutter.dev/release/archive for the current stable
+# version and pass --build-arg FLUTTER_VERSION=<new version> to bump it.
+ARG FLUTTER_VERSION=3.27.1
+ENV FLUTTER_HOME=/opt/flutter
+ENV PATH=$PATH:$FLUTTER_HOME/bin
+RUN set -e && \
+    curl -fsSL -o /tmp/flutter.tar.xz \
+      "https://storage.googleapis.com/flutter_infra_release/releases/stable/linux/flutter_linux_${FLUTTER_VERSION}-stable.tar.xz" && \
+    tar xf /tmp/flutter.tar.xz -C /opt && \
+    rm /tmp/flutter.tar.xz && \
+    git config --global --add safe.directory $FLUTTER_HOME && \
+    flutter config --no-analytics --no-cli-animations && \
+    flutter precache --android && \
+    yes | flutter doctor --android-licenses > /dev/null && \
+    flutter doctor -v
 
 # Isolated virtualenv for the Python server, kept off the system Python so
 # it can never collide with anything apt/sdkmanager might also touch.

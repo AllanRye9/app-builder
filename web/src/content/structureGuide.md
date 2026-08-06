@@ -10,10 +10,17 @@
 - The complete Gradle wrapper: `gradlew`, `gradlew.bat`, `gradle/wrapper/gradle-wrapper.jar`, `gradle/wrapper/gradle-wrapper.properties`
 - Run `gradle wrapper` before zipping if any of those are missing
 
+## Flutter project
+
+- `pubspec.yaml` at the project root
+- An `android/` folder is optional — generated automatically if missing, left untouched if you include your own
+- `ios/` is allowed alongside it (only `android/` is ever built into an APK here)
+- No Gradle wrapper required — `flutter build apk` manages its own embedded Android build
+
 ## Archive rules
 
 - One project per `.zip`, up to **300 MB** — several archives can be dropped at once
-- A single top-level wrapper folder (e.g. `my-app/`) is fine — it's auto-flattened
+- The project doesn't need to sit at the archive root — a wrapper folder, or several nested folders, are fine and auto-detected
 - Path traversal, absolute paths, and null bytes in entry names are rejected outright
 
 ## Allowed file types
@@ -29,3 +36,4 @@ Anything else (editor/OS cruft, license files, unrecognized binaries) is silentl
 | Media | `.png` `.jpg` `.svg` `.webp` |
 | Fonts | `.woff` `.ttf` |
 | Native | `.kt` `.java` `.gradle` `.xml` |
+| Flutter | `.dart` `.arb` |

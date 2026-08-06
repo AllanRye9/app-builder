@@ -10,10 +10,18 @@
   --line: #262d38;
   --line-soft: #1d232c;
 
-  /* -- text -- */
-  --paper: #eef1f4;
-  --dim: #8b95a3;
-  --faint: #5c6673;
+  /* -- text --
+     A pure/cool blue-white (e.g. #eef1f4) reads harsher against a very
+     dark surface than it needs to — screens already push white toward
+     blue, and stacking a cool text color on top compounds it into visible
+     halation/glare. A very slightly warm off-white is the standard
+     dark-mode-text fix (see Material's "white at ~87%" guidance) and
+     happens to suit Space Grotesk/Inter's warmer, more humanist geometry
+     better than a clinical blue-white would. Contrast is unaffected —
+     still 16.7:1 (paper), 7.3:1 (dim), 3.6:1 (faint) against --ink. */
+  --paper: #f2efe6;
+  --dim: #98a0ab;
+  --faint: #616b78;
 
   /* -- accents: copper = active/building, teal = done, violet = queued, coral = failed -- */
   --copper: #e0913f;
@@ -46,16 +54,30 @@
 
 /* -- Light theme -- */
 [data-theme="light"] {
-  --ink: #f3f4f6;
-  --floor: #ffffff;
+  /* A flat #ffffff is a screen color, not a paper one — it reads as glare
+     rather than a surface, and it's colder than Space Grotesk/Inter's
+     warmer geometry wants to sit on. This scale uses a soft, barely-warm
+     off-white ("paper", true to the --paper variable's own name) for the
+     page and dashboard-card background, reserving true #ffffff for
+     --surface so hover/active elevation actually reads as a lift again —
+     --floor and --surface were previously both #ffffff, so hover states
+     had no visible effect at all. --ink/--line/--line-soft are warmed to
+     match, so the whole scale shares one consistent undertone instead of
+     white islands sitting on a cooler grey. */
+  --ink: #f5f3ef;
+  --floor: #fdfcfa;
   --surface: #ffffff;
-  --surface-2: #eef0f3;
-  --line: #dde1e7;
-  --line-soft: #e7eaee;
+  --surface-2: #f1eee7;
+  --line: #e3ddd2;
+  --line-soft: #ece7dd;
 
-  --paper: #1a1e24;
-  --dim: #5a6472;
-  --faint: #93a0ae;
+  /* Warmed to match the paper background above — a cool blue-black (the
+     old #1a1e24) on a warm white looks mismatched; a warm-neutral
+     near-black keeps the same near-16:1 contrast while actually
+     belonging to the same palette as the surface it sits on. */
+  --paper: #201e1a;
+  --dim: #665e53;
+  --faint: #a39a8c;
 
   --copper: #c76a1d;
   --copper-dim: #f0d3ae;
@@ -85,7 +107,10 @@
   --line: #1d4356;
   --line-soft: #163646;
 
-  --paper: #e6f4f6;
+  /* Kept close to its original cyan tint on purpose — that's this theme's
+     identity — just softened a hair so it sits alongside the other two
+     themes' now-refined whites rather than reading as a stray hue. */
+  --paper: #eaf4f2;
   --dim: #86adba;
   --faint: #4f7787;
 
@@ -392,7 +417,7 @@ body {
   border: 1px solid var(--line);
 }
 .theme-swatch[data-swatch="dark"] { background: linear-gradient(135deg, #10141a 50%, #e0913f 50%); }
-.theme-swatch[data-swatch="light"] { background: linear-gradient(135deg, #ffffff 50%, #c76a1d 50%); }
+.theme-swatch[data-swatch="light"] { background: linear-gradient(135deg, #fdfcfa 50%, #c76a1d 50%); }
 .theme-swatch[data-swatch="ocean"] { background: linear-gradient(135deg, #071c29 50%, #3fc7e0 50%); }
 
 .center-scroll {
@@ -1030,6 +1055,28 @@ button { font-family: inherit; }
   border-radius: var(--radius-sm);
   background: var(--surface-2);
   overflow: hidden;
+}
+/* Nudges the eye toward a collapsed-by-default archive preview without
+   forcing it open — a soft pulsing ring plus a small fading hint label,
+   both gone for good the moment the user opens it once (see
+   FileTree.jsx's `everOpened`). */
+.filetree-attn {
+  animation: filetree-attn-ring 1.8s ease-in-out infinite;
+}
+@keyframes filetree-attn-ring {
+  0%, 100% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--copper) 40%, transparent); border-color: var(--line-soft); }
+  50% { box-shadow: 0 0 0 4px color-mix(in srgb, var(--copper) 0%, transparent); border-color: var(--copper-dim); }
+}
+.filetree-attn-hint {
+  margin-left: 8px;
+  color: var(--copper);
+  font-style: italic;
+  animation: filetree-attn-hint-fade 1.8s ease-in-out infinite;
+}
+@keyframes filetree-attn-hint-fade { 0%, 100% { opacity: 0.5; } 50% { opacity: 1; } }
+@media (prefers-reduced-motion: reduce) {
+  .filetree-attn { animation: none; box-shadow: 0 0 0 1px var(--copper-dim); }
+  .filetree-attn-hint { animation: none; opacity: 0.85; }
 }
 .filetree-toggle {
   display: flex;

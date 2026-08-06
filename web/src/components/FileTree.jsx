@@ -10,13 +10,20 @@ const STAGGER_MS = 14;
 export default function FileTree({ file }) {
   const [state, setState] = useState('inspecting'); // inspecting | ready | error
   const [result, setResult] = useState(null);
-  const [collapsed, setCollapsed] = useState(false);
+  // Collapsed by default — the archive is inspected automatically, but
+  // showing its contents is the user's call, not something sprung on them.
+  // The toggle button gets an attention nudge instead (see filetree-attn
+  // below) so it's still obvious there's something worth a look.
+  const [collapsed, setCollapsed] = useState(true);
+  const [everOpened, setEverOpened] = useState(false);
   const cancelled = useRef(false);
 
   useEffect(() => {
     cancelled.current = false;
     setState('inspecting');
     setResult(null);
+    setCollapsed(true);
+    setEverOpened(false);
     inspectZip(file)
       .then((r) => {
         if (cancelled.current) return;
@@ -34,12 +41,20 @@ export default function FileTree({ file }) {
 
   if (state === 'error') return null; // the real validation error still surfaces via the build log
 
+  // Nudge only while there's actually something to look at and the person
+  // hasn't opened it yet — stops for good the first time they do, even if
+  // they collapse it again afterward.
+  const showAttn = state === 'ready' && collapsed && !everOpened;
+
   return (
-    <div className="filetree">
+    <div className={`filetree${showAttn ? ' filetree-attn' : ''}`}>
       <button
         type="button"
         className="filetree-toggle"
-        onClick={() => setCollapsed((c) => !c)}
+        onClick={() => {
+          setCollapsed((c) => !c);
+          setEverOpened(true);
+        }}
         aria-expanded={!collapsed}
       >
         <span className={`log-toggle-caret${!collapsed ? ' open' : ''}`} aria-hidden="true">▸</span>
@@ -48,6 +63,11 @@ export default function FileTree({ file }) {
           <span className="filetree-count">
             {result.fileCount} file{result.fileCount === 1 ? '' : 's'}
             {result.dirCount > 0 ? ` · ${result.dirCount} folder${result.dirCount === 1 ? '' : 's'}` : ''}
+          </span>
+        )}
+        {showAttn && (
+          <span className="filetree-attn-hint" aria-hidden="true">
+            tap to preview
           </span>
         )}
       </button>
@@ -89,16 +109,19 @@ function Summary({ result }) {
       </div>
     );
   }
+  if (result.projectType === 'flutter') {
+    return <div className="filetree-summary filetree-summary-good">pubspec.yaml found → will build as a Flutter project.</div>;
+  }
   if (result.projectType === 'capacitor-web') {
-    return <div className="filetree-summary filetree-summary-good">package.json found at root → will build as a web/Capacitor project.</div>;
+    return <div className="filetree-summary filetree-summary-good">package.json found → will build as a web/Capacitor project.</div>;
   }
   if (result.projectType === 'native-android') {
-    return <div className="filetree-summary filetree-summary-good">settings.gradle found at root → will build as a native Android project.</div>;
+    return <div className="filetree-summary filetree-summary-good">settings.gradle found → will build as a native Android project.</div>;
   }
   return (
     <div className="filetree-summary filetree-summary-warn">
-      No package.json or settings.gradle spotted at the root yet — the server will reject this unless one of
-      those is present (see the structure guide above).
+      No package.json, settings.gradle, or pubspec.yaml spotted anywhere in the archive yet — the server will
+      reject this unless one of those is present (see the structure guide above).
     </div>
   );
 }

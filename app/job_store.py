@@ -48,7 +48,7 @@ class Job:
     # app/build_runner.py for where these actually get applied.
     permissions: list[str] = field(default_factory=list)
     # Set once validate.py has inspected the extracted project
-    # ('capacitor-web' or 'native-android'); None until then.
+    # ('capacitor-web', 'native-android', or 'flutter'); None until then.
     project_type: str | None = None
 
 

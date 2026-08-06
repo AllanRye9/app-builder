@@ -5,12 +5,17 @@ import JSZip from 'jszip';
 // the browser flag the same things the uploader is about to be told about,
 // before the archive ever leaves the browser.
 const FORBIDDEN_TOP_LEVEL = new Set(['android', 'ios', 'platforms']);
+// Subset of FORBIDDEN_TOP_LEVEL a Flutter project is allowed to bring with
+// it — these are the project's own native platform folders, not build
+// output. Mirrors validate.py's FLUTTER_ALLOWED_TOP_LEVEL.
+const FLUTTER_ALLOWED_TOP_LEVEL = new Set(['android', 'ios']);
 const ROOT_MARKERS = new Set([
   'package.json',
   'settings.gradle',
   'settings.gradle.kts',
   'build.gradle',
   'build.gradle.kts',
+  'pubspec.yaml',
 ]);
 const WRAPPER_FILES = new Set([
   'gradlew',
@@ -23,8 +28,11 @@ const WRAPPER_FILES = new Set([
 // past this, the raw count still shows, just without a row-per-file.
 const MAX_RENDERED_ENTRIES = 400;
 
-function flagFor(name, depth, isDir) {
-  if (isDir && depth === 0 && FORBIDDEN_TOP_LEVEL.has(name.toLowerCase())) return 'forbidden';
+function flagFor(name, depth, isDir, hasPubspec) {
+  if (isDir && depth === 0 && FORBIDDEN_TOP_LEVEL.has(name.toLowerCase())) {
+    if (hasPubspec && FLUTTER_ALLOWED_TOP_LEVEL.has(name.toLowerCase())) return null;
+    return 'forbidden';
+  }
   // Root markers are searched for anywhere in the archive, not just at
   // the top level — the server (validate.py's _locate_project_root) does
   // the same, in case the project is nested a folder or two deep. This
@@ -53,10 +61,19 @@ export async function inspectZip(file) {
   let rendered = 0;
   // Flat record of every flagged node, independent of the nested tree
   // structure — this is what detection runs against, so it still catches a
-  // package.json/settings.gradle (or a forbidden folder) one level down
-  // inside a single top-level wrapper folder, same as validate.py's raw
-  // entry scan does before it ever flattens anything.
+  // package.json/settings.gradle/pubspec.yaml (or a forbidden folder) one
+  // level down inside a single top-level wrapper folder, same as
+  // validate.py's raw entry scan does before it ever flattens anything.
   const flagged = [];
+
+  // Pre-scan pass: same reason as validate.py's own pre-scan — whether
+  // android/ or ios/ at the top level is allowed depends on whether this
+  // is a Flutter upload, and entries are visited in alphabetical order
+  // (so e.g. "android/..." would otherwise be seen before "pubspec.yaml").
+  const hasPubspec = entries.some((e) => {
+    const parts = e.name.split('/').filter(Boolean);
+    return parts.length > 0 && parts[parts.length - 1] === 'pubspec.yaml';
+  });
 
   for (const entry of entries) {
     const isDir = entry.dir || entry.name.endsWith('/');
@@ -76,7 +93,7 @@ export async function inspectZip(file) {
           return;
         }
         rendered += 1;
-        const flag = flagFor(part, i, thisIsDir);
+        const flag = flagFor(part, i, thisIsDir, hasPubspec);
         const newNode = {
           name: part,
           path: pathSoFar,
@@ -111,7 +128,8 @@ export async function inspectZip(file) {
   );
 
   let projectType = null;
-  if (hasPackageJson) projectType = 'capacitor-web';
+  if (hasPubspec) projectType = 'flutter';
+  else if (hasPackageJson) projectType = 'capacitor-web';
   else if (hasSettingsGradle) projectType = 'native-android';
 
   return {

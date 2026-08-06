@@ -122,6 +122,21 @@ class Settings:
     # many distinct lockfile hashes have accumulated.
     DEP_CACHE_MAX_ENTRIES: int = field(default_factory=lambda: _env_int("DEP_CACHE_MAX_ENTRIES", 8))
 
+    # Same idea as NPM_CACHE_DIR/GRADLE_RO_DEP_CACHE above, but for
+    # Flutter's own package manager: pub. Set as $PUB_CACHE for every
+    # `flutter`/`dart` invocation (see build_runner.py's
+    # _run_flutter_build), so a pub package this container has already
+    # downloaded for one job's pubspec.lock is never re-fetched by the
+    # next job that happens to depend on it too. Unlike DEP_CACHE_DIR,
+    # this doesn't need its own hardlink/eviction machinery — pub's cache
+    # is already content-addressed by package name+version, so plain
+    # reuse across jobs is safe without any extra bookkeeping here.
+    PUB_CACHE_DIR: Path = field(
+        default_factory=lambda: Path(
+            os.environ.get("PUB_CACHE_DIR") or Path(tempfile.gettempdir()) / "apk-builder-cache" / "pub-cache"
+        )
+    )
+
     # A proper (small) database for visitor/country analytics — SQLite,
     # not another JSON blob: concurrent-safe writes via WAL mode, atomic
     # upserts instead of read-modify-write-the-whole-file, and indexed
@@ -182,6 +197,11 @@ class Settings:
     APP_ID: str = field(default_factory=lambda: _env_str("APP_ID", "com.builder.app"))
     APP_NAME: str = field(default_factory=lambda: _env_str("APP_NAME", "MyApp"))
     CAPACITOR_MAJOR: str = field(default_factory=lambda: _env_str("CAPACITOR_MAJOR", "7"))
+    # 'debug' matches what the other two project types produce (an
+    # unsigned, installable-as-is debug APK) and keeps `flutter build apk`
+    # from needing a release signing config the uploader hasn't provided.
+    # Override to "release" only if this deployment also wires up signing.
+    FLUTTER_BUILD_MODE: str = field(default_factory=lambda: _env_str("FLUTTER_BUILD_MODE", "debug"))
 
     @property
     def cors_origins(self) -> list[str]:

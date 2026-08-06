@@ -27,6 +27,7 @@ SHARED_BUILD_CACHE_INIT_SCRIPT = Path(__file__).with_name("shared-build-cache-in
 APP_ID = os.environ.get("APP_ID", settings.APP_ID)
 APP_NAME = os.environ.get("APP_NAME", settings.APP_NAME)
 CAPACITOR_MAJOR = os.environ.get("CAPACITOR_MAJOR", settings.CAPACITOR_MAJOR)
+FLUTTER_BUILD_MODE = os.environ.get("FLUTTER_BUILD_MODE", settings.FLUTTER_BUILD_MODE)
 
 # Created once at import time, shared by every job for the life of this
 # process — see config.py for why these live outside JOB_ROOT.
@@ -34,6 +35,7 @@ settings.NPM_CACHE_DIR.mkdir(parents=True, exist_ok=True)
 settings.GRADLE_RO_DEP_CACHE.mkdir(parents=True, exist_ok=True)
 settings.GRADLE_SHARED_BUILD_CACHE_DIR.mkdir(parents=True, exist_ok=True)
 settings.GRADLE_DIST_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+settings.PUB_CACHE_DIR.mkdir(parents=True, exist_ok=True)
 # Gradle's shared read-only dependency cache refuses to activate unless this
 # exact subdirectory already exists — otherwise every build logs "Read-only
 # cache is configured but the directory layout isn't expected" and silently
@@ -249,6 +251,12 @@ class _BuildContext:
         # job.
         child_env["NPM_CONFIG_CACHE"] = str(settings.NPM_CACHE_DIR)
 
+        # Same idea, for Flutter/Dart's own package manager — set
+        # unconditionally too; only `flutter`/`dart pub` invocations ever
+        # read it. See config.py's PUB_CACHE_DIR for why this doesn't need
+        # its own hardlink/eviction layer the way DEP_CACHE_DIR does.
+        child_env["PUB_CACHE"] = str(settings.PUB_CACHE_DIR)
+
         # Gradle's cache and its daemon registry are DIFFERENT things and
         # must NOT share a directory across concurrent jobs — sharing
         # GRADLE_USER_HOME across concurrent builds produces an endless
@@ -460,6 +468,8 @@ async def _run_build(job: Job) -> None:
 
         if job.project_type == "native-android":
             await _run_native_android_build(job, ctx)
+        elif job.project_type == "flutter":
+            await _run_flutter_build(job, ctx)
         else:
             await _run_capacitor_build(job, ctx)
 
@@ -609,6 +619,92 @@ async def _run_native_android_build(job: Job, ctx: _BuildContext) -> None:
     apks.sort(key=lambda p: p.stat().st_size, reverse=True)
 
     _finalize_apk(job, apks[0])
+
+
+def _flutter_org(app_id: str) -> str:
+    """Derives a reverse-domain '--org' for `flutter create` from APP_ID
+    (e.g. "com.builder.app" -> "com.builder") — only used as a fallback
+    when an uploaded Flutter project didn't ship its own android/ folder,
+    so the org just needs to be a valid reverse-domain string, not an
+    exact match for anything.
+    """
+    parts = app_id.split(".")
+    if len(parts) >= 2:
+        return ".".join(parts[:-1])
+    return "com.builder"
+
+
+async def _run_flutter_build(job: Job, ctx: _BuildContext) -> None:
+    """Path C: a Flutter (Dart) project. Unlike native-android, we never
+    invoke gradlew directly — `flutter build apk` drives its own embedded
+    android/ Gradle project internally (and shares this container's real
+    Android SDK/JDK exactly as the other two paths do, since it's still
+    Gradle underneath). The uploader's code is otherwise untouched: the
+    only things this build ever writes are permissions the uploader
+    explicitly requested, and — only if the upload didn't already include
+    one — a generated android/ platform folder.
+    """
+    project_dir = job.project_dir
+    android_dir = project_dir / "android"
+
+    log(job, "Flutter (Dart) project detected — building with the Flutter CLI.")
+    set_step(job, "Fetching Flutter/Dart dependencies", 20)
+    await ctx.run("flutter", ["pub", "get"])
+
+    # A Flutter project uploaded without its own android/ folder is still
+    # valid (validate.py doesn't require one — plenty of real projects are
+    # developed iOS/web-first). `flutter create --platforms=android .`
+    # against a directory that already has a pubspec.yaml only adds the
+    # missing platform folder; it does not touch pubspec.yaml, lib/, or
+    # anything else already there, so this is safe to run unconditionally
+    # rather than needing its own "is this really empty" check.
+    if not android_dir.exists():
+        log(job, "No android/ folder in this project — generating one before building.")
+        await ctx.run("flutter", ["create", "--platforms=android", f"--org={_flutter_org(APP_ID)}", "."])
+        if not android_dir.exists():
+            raise RuntimeError("flutter create ran but no android/ folder was produced.")
+
+    set_step(job, "Preparing Android manifest", 35)
+    # Same reasoning as the native-android path above: search for every
+    # AndroidManifest.xml under android/ rather than assuming one exact
+    # path, since `flutter create` and hand-edited projects don't always
+    # agree on the module layout.
+    manifests = _find_files_recursive(android_dir, lambda name: name == "AndroidManifest.xml", _SOURCE_SEARCH_SKIP_DIRS)
+    for manifest_path in manifests:
+        _patch_manifest_permissions(job, manifest_path)
+
+    set_step(job, "Compiling APK with Flutter", 55)
+    # --debug (the default, see config.py's FLUTTER_BUILD_MODE) produces an
+    # unsigned, installable-as-is APK with no signing config required —
+    # the same trade-off the other two project types make. `flutter build
+    # apk` handles the embedded Gradle invocation itself; it isn't run
+    # through ctx.run_gradle() since there's no single gradlew path to
+    # hand it (flutter build apk internally locates android/gradlew).
+    await ctx.run("flutter", ["build", "apk", f"--{FLUTTER_BUILD_MODE}"])
+
+    set_step(job, "Finalizing APK", 95)
+    # Flutter's own build output lives under the *project* root's build/,
+    # not under android/ — unlike the other two paths, whose Gradle output
+    # is nested under android/app/build/.
+    outputs_dir = project_dir / "build" / "app" / "outputs" / "flutter-apk"
+    apk_source_path = outputs_dir / f"app-{FLUTTER_BUILD_MODE}.apk"
+    if not apk_source_path.exists():
+        # Fall back to a search, same pattern as the native-android path,
+        # in case a Flutter version ever renames its default output file.
+        found = [
+            p
+            for p in _find_files_recursive(project_dir, lambda name: name.endswith(".apk"), _OUTPUT_SEARCH_SKIP_DIRS)
+            if "flutter-apk" in str(p)
+        ]
+        if found:
+            found.sort(key=lambda p: p.stat().st_size, reverse=True)
+            apk_source_path = found[0]
+    if not apk_source_path.exists():
+        raise RuntimeError(
+            "Flutter reported success but no APK was found under build/app/outputs/flutter-apk/."
+        )
+
+    _finalize_apk(job, apk_source_path)
 
 
 def _finalize_apk(job: Job, apk_source_path: Path) -> None:

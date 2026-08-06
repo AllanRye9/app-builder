@@ -209,12 +209,13 @@ async def upload(
     try:
         result = validate_and_extract(upload_path, job.project_dir)
         job.project_type = result.project_type
-        log(
-            job,
-            "Validation passed: native Kotlin/Java Android (Gradle) project detected."
-            if result.project_type == "native-android"
-            else "Validation passed: plain React/Capacitor-ready project detected.",
-        )
+        if result.project_type == "native-android":
+            validation_message = "Validation passed: native Kotlin/Java Android (Gradle) project detected."
+        elif result.project_type == "flutter":
+            validation_message = "Validation passed: Flutter (Dart) project detected."
+        else:
+            validation_message = "Validation passed: plain React/Capacitor-ready project detected."
+        log(job, validation_message)
         if result.skipped:
             log(job, f"Skipped {len(result.skipped)} file(s) not needed to build the app: {', '.join(result.skipped)}")
             skipped_list = result.skipped

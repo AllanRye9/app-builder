@@ -16,23 +16,37 @@ class ValidationError(Exception):
     pass
 
 
-# android/, ios/, and platforms/ are genuinely generated output — an
-# existing one would collide with what the build creates and can't be
-# safely merged, so those still hard-reject. A capacitor.config.json/.ts by
-# itself is different: plenty of real Capacitor-ready projects ship one
+# android/, ios/, and platforms/ are genuinely generated output for a
+# capacitor-web or native-android upload — an existing one would collide
+# with what the build creates and can't be safely merged, so those still
+# hard-reject for those two project types. A Flutter project is the one
+# exception: its own android/ (and ios/) folders are real, hand-maintained
+# source — not build output — so FLUTTER_ALLOWED_TOP_LEVEL below is
+# consulted before this rejects, once pubspec.yaml has been spotted
+# anywhere in the archive. A capacitor.config.json/.ts by itself is
+# different again: plenty of real Capacitor-ready projects ship one
 # deliberately, and build_runner.py detects it and reuses it instead of
 # overwriting it via `cap init`, rather than rejecting it here.
 FORBIDDEN_TOP_LEVEL = frozenset({"android", "ios", "platforms"})
+
+# Subset of FORBIDDEN_TOP_LEVEL that a Flutter project is allowed to bring
+# with it, since these are the project's own native platform folders, not
+# something the build generates. "platforms" is deliberately NOT included
+# here — that name belongs to Cordova, not Flutter, so seeing it stays a
+# hard reject even for a pubspec.yaml upload.
+FLUTTER_ALLOWED_TOP_LEVEL = frozenset({"android", "ios"})
 
 # Only these file types are trusted to build the app itself. Anything else
 # in the archive (editor/OS cruft, license files, whatever) is simply
 # skipped rather than failing the whole upload — none of it is needed to
 # build the APK.
 #
-# Covers both project kinds this builder accepts:
+# Covers all three project kinds this builder accepts:
 #  - a web project (React/Vite/etc.) wrapped into Android via Capacitor
 #  - a native Android project written in Kotlin and/or Java, built with its
 #    own Gradle project directly (no Capacitor/web step at all)
+#  - a Flutter project (Dart), built with its embedded android/ Gradle
+#    project via `flutter build apk`
 ALLOWED_EXTENSIONS = frozenset(
     {
         # Web project sources
@@ -50,6 +64,10 @@ ALLOWED_EXTENSIONS = frozenset(
         # wrapper) is allowlisted by exact name instead of opening up
         # arbitrary binary jars.
         ".kt", ".kts", ".java", ".gradle", ".pro", ".properties", ".aidl", ".xml",
+        # Flutter/Dart sources. '.arb' is Flutter's localization resource
+        # bundle format (JSON under the hood) — harmless text, same
+        # reasoning as any other config extension above.
+        ".dart", ".arb",
     }
 )
 
@@ -71,6 +89,7 @@ ALLOWED_BASENAMES = frozenset(
 
 _PACKAGE_JSON_RE = re.compile(r"(^|/)package\.json$")
 _SETTINGS_GRADLE_RE = re.compile(r"(^|/)settings\.gradle(\.kts)?$")
+_PUBSPEC_RE = re.compile(r"(^|/)pubspec\.yaml$")
 
 
 @dataclass
@@ -102,14 +121,20 @@ def _is_allowed_file(entry_name: str) -> bool:
 
 
 def detect_project_type(dest_dir: Path) -> str | None:
-    """A project is buildable one of two ways, decided purely by what it
+    """A project is buildable one of three ways, decided purely by what it
     contains — never by a flag the uploader has to set:
+      - 'flutter': a pubspec.yaml at the root — a Dart/Flutter project,
+        built with `flutter build apk` (which drives its own embedded
+        android/ Gradle project internally). Checked first since a
+        pubspec.yaml is Flutter's own unambiguous marker.
       - 'capacitor-web': a package.json at the root (React/Vite/etc.),
         wrapped into an Android shell via Capacitor at build time.
       - 'native-android': a Gradle project at the root
         (settings.gradle(.kts) + a root build.gradle(.kts)) with no
         wrapping needed — its own gradlew builds the APK directly.
     """
+    if (dest_dir / "pubspec.yaml").exists():
+        return "flutter"
     if (dest_dir / "package.json").exists():
         return "capacitor-web"
     has_settings_gradle = (dest_dir / "settings.gradle").exists() or (dest_dir / "settings.gradle.kts").exists()
@@ -132,11 +157,14 @@ def _locate_project_root(dest_dir: Path) -> Path | None:
     Some archives wrap the real project in one or more nested folders (a
     repo name, a workspace folder, a stray extra layer, ...); this walks
     everything under dest_dir and returns the shallowest directory that
-    looks like a project root — a package.json, or a paired
-    settings.gradle(.kts) + build.gradle(.kts). Returns dest_dir itself if
-    it already qualifies, or None if nothing anywhere does.
+    looks like a project root — a pubspec.yaml, a package.json, or a
+    paired settings.gradle(.kts) + build.gradle(.kts). Returns dest_dir
+    itself if it already qualifies, or None if nothing anywhere does.
     """
-    if (dest_dir / "package.json").exists() or _has_gradle_project(dest_dir):
+    def _is_root(d: Path) -> bool:
+        return (d / "pubspec.yaml").exists() or (d / "package.json").exists() or _has_gradle_project(d)
+
+    if _is_root(dest_dir):
         return dest_dir
 
     best: Path | None = None
@@ -144,7 +172,7 @@ def _locate_project_root(dest_dir: Path) -> Path | None:
     for path in dest_dir.rglob("*"):
         if not path.is_dir():
             continue
-        if (path / "package.json").exists() or _has_gradle_project(path):
+        if _is_root(path):
             depth = len(path.relative_to(dest_dir).parts)
             if best_depth is None or depth < best_depth:
                 best, best_depth = path, depth
@@ -215,6 +243,16 @@ def validate_and_extract(zip_path: Path, dest_dir: Path) -> ExtractResult:
         skipped: list[str] = []
         to_extract: list[zipfile.ZipInfo] = []
 
+        # Pre-scan pass: just look for a pubspec.yaml anywhere in the
+        # archive, before the main validation loop below runs. This has to
+        # happen first (not inline in that loop) because whether an
+        # android/ or ios/ top-level folder is allowed depends on whether
+        # this is a Flutter upload — and zip entries can appear in any
+        # order, so the folder might be seen before pubspec.yaml is.
+        has_pubspec = any(
+            _PUBSPEC_RE.search(info.filename.replace("\\", "/")) for info in infos
+        )
+
         for info in infos:
             entry_name = info.filename.replace("\\", "/")
 
@@ -224,10 +262,10 @@ def validate_and_extract(zip_path: Path, dest_dir: Path) -> ExtractResult:
             parts = [p for p in entry_name.split("/") if p]
             top_level = parts[0].lower() if parts else ""
 
-            if top_level in FORBIDDEN_TOP_LEVEL:
+            if top_level in FORBIDDEN_TOP_LEVEL and not (has_pubspec and top_level in FLUTTER_ALLOWED_TOP_LEVEL):
                 raise ValidationError(
-                    f'Archive already contains "{parts[0]}". Upload a plain React (or native '
-                    f'Android) project — the "{parts[0]}" folder is generated by the build.'
+                    f'Archive already contains "{parts[0]}". Upload a plain React, native '
+                    f'Android, or Flutter project — the "{parts[0]}" folder is generated by the build.'
                 )
 
             # Search the whole archive, not just the root — some
@@ -250,10 +288,10 @@ def validate_and_extract(zip_path: Path, dest_dir: Path) -> ExtractResult:
             else:
                 skipped.append(entry_name)
 
-        if not has_package_json and not has_gradle_project:
+        if not has_package_json and not has_gradle_project and not has_pubspec:
             raise ValidationError(
-                "No package.json (web/Capacitor project) or settings.gradle (native Android "
-                "project) found at the project root."
+                "No package.json (web/Capacitor project), settings.gradle (native Android "
+                "project), or pubspec.yaml (Flutter project) found anywhere in the archive."
             )
 
         dest_dir.mkdir(parents=True, exist_ok=True)
@@ -270,10 +308,27 @@ def validate_and_extract(zip_path: Path, dest_dir: Path) -> ExtractResult:
     if project_root is not None and project_root != dest_dir:
         _promote_project_root(dest_dir, project_root)
 
+    # Re-check for a forbidden folder now that the real project root has
+    # been promoted to dest_dir. The pre-extraction pass above only ever
+    # sees the archive's literal top level, so a project nested inside a
+    # wrapper folder (e.g. "myrepo/android/" alongside "myrepo/package.json")
+    # would slip past it — this check is what actually matters, since it's
+    # dest_dir's immediate children the build is about to write into.
+    for entry in dest_dir.iterdir():
+        name_lower = entry.name.lower()
+        if entry.is_dir() and name_lower in FORBIDDEN_TOP_LEVEL:
+            if has_pubspec and name_lower in FLUTTER_ALLOWED_TOP_LEVEL:
+                continue
+            raise ValidationError(
+                f'Archive already contains "{entry.name}". Upload a plain React, native '
+                f'Android, or Flutter project — the "{entry.name}" folder is generated by the build.'
+            )
+
     project_type = detect_project_type(dest_dir)
     if not project_type:
         raise ValidationError(
-            "Could not confirm a package.json or settings.gradle at the project root after extraction."
+            "Could not confirm a package.json, settings.gradle, or pubspec.yaml at the "
+            "project root after extraction."
         )
 
     if project_type == "native-android":
