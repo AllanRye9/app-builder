@@ -52,9 +52,37 @@ _RESERVED_MB = 512
 _MIN_BUILD_HEAP_MB = 768
 _MAX_BUILD_HEAP_MB = 2048
 _TOTAL_MB = psutil.virtual_memory().total / 1024 / 1024
+_PER_SLOT_MB = (_TOTAL_MB - _RESERVED_MB) / max(settings.MAX_CONCURRENT_BUILDS, 1)
 GRADLE_HEAP_MB = max(
     _MIN_BUILD_HEAP_MB,
-    min(_MAX_BUILD_HEAP_MB, int((_TOTAL_MB - _RESERVED_MB) / max(settings.MAX_CONCURRENT_BUILDS, 1))),
+    min(_MAX_BUILD_HEAP_MB, int(_PER_SLOT_MB)),
+)
+
+# A Flutter build is NOT one JVM per slot the way native-android/Capacitor
+# builds are — `flutter build apk` runs its own Dart VM (frontend_server /
+# kernel + AOT compilation) *and* drives an embedded Gradle JVM for the
+# android/ project, both alive at once. Handing a Flutter job the same
+# full GRADLE_HEAP_MB on top of an otherwise-uncapped Dart VM means one
+# build slot can claim two full-sized processes' worth of RAM — this is
+# the main driver of this container's "huge memory utilization" under
+# Flutter builds. Instead, split the same per-slot budget GRADLE_HEAP_MB
+# is drawn from across the two processes so a Flutter job stays inside
+# roughly the same envelope as any other job. The Gradle side gets the
+# smaller share since, for a Flutter project, its embedded Gradle
+# invocation only packages an already-compiled app (no Kotlin/Java
+# app-module compilation of its own to speak of) — the Dart VM is doing
+# the heavy lifting.
+_MIN_FLUTTER_GRADLE_HEAP_MB = 384
+_MAX_FLUTTER_GRADLE_HEAP_MB = 1024
+_MIN_FLUTTER_DART_HEAP_MB = 512
+_MAX_FLUTTER_DART_HEAP_MB = 1536
+FLUTTER_GRADLE_HEAP_MB = max(
+    _MIN_FLUTTER_GRADLE_HEAP_MB,
+    min(_MAX_FLUTTER_GRADLE_HEAP_MB, int(_PER_SLOT_MB * 0.4)),
+)
+FLUTTER_DART_HEAP_MB = max(
+    _MIN_FLUTTER_DART_HEAP_MB,
+    min(_MAX_FLUTTER_DART_HEAP_MB, int(_PER_SLOT_MB * 0.6)),
 )
 
 _queue: list[Job] = []
@@ -302,9 +330,22 @@ class _BuildContext:
         # real total RAM and MAX_CONCURRENT_BUILDS (see GRADLE_HEAP_MB
         # above). Harmless to set unconditionally on every spawned command
         # (npm/npx included) — those simply never read GRADLE_OPTS.
-        gradle_jvm_args = f"-Xmx{GRADLE_HEAP_MB}m -Djava.net.preferIPv4Stack=true"
+        is_flutter_job = job.project_type == "flutter"
+        gradle_heap_mb = FLUTTER_GRADLE_HEAP_MB if is_flutter_job else GRADLE_HEAP_MB
+        gradle_jvm_args = f"-Xmx{gradle_heap_mb}m -Djava.net.preferIPv4Stack=true"
         child_env["GRADLE_OPTS"] = " ".join(filter(None, [child_env.get("GRADLE_OPTS"), gradle_jvm_args]))
         child_env.pop("JAVA_TOOL_OPTIONS", None)
+
+        if is_flutter_job:
+            # Caps the Dart VM's old-space heap (frontend_server, the
+            # kernel compiler, and `flutter`/`dart` itself all run on this
+            # VM) the same way GRADLE_OPTS caps the JVM above. Read by
+            # every `flutter`/`dart` invocation this job makes (pub get,
+            # create, build) — harmless to set for the lighter-weight
+            # early steps too, since they use far less memory than the
+            # actual `build apk` compile.
+            dart_vm_args = f"--old_gen_heap_size={FLUTTER_DART_HEAP_MB}"
+            child_env["DART_VM_OPTIONS"] = " ".join(filter(None, [child_env.get("DART_VM_OPTIONS"), dart_vm_args]))
 
         # Belt-and-suspenders against a build that "never completes": with no
         # stdin argument, asyncio inherits this *server's* stdin, which in a
@@ -646,23 +687,52 @@ async def _run_flutter_build(job: Job, ctx: _BuildContext) -> None:
     """
     project_dir = job.project_dir
     android_dir = project_dir / "android"
+    gradlew_path = android_dir / "gradlew"
+    gradle_wrapper_jar = android_dir / "gradle" / "wrapper" / "gradle-wrapper.jar"
 
     log(job, "Flutter (Dart) project detected — building with the Flutter CLI.")
     set_step(job, "Fetching Flutter/Dart dependencies", 20)
     await ctx.run("flutter", ["pub", "get"])
 
-    # A Flutter project uploaded without its own android/ folder is still
-    # valid (validate.py doesn't require one — plenty of real projects are
-    # developed iOS/web-first). `flutter create --platforms=android .`
-    # against a directory that already has a pubspec.yaml only adds the
-    # missing platform folder; it does not touch pubspec.yaml, lib/, or
-    # anything else already there, so this is safe to run unconditionally
-    # rather than needing its own "is this really empty" check.
-    if not android_dir.exists():
-        log(job, "No android/ folder in this project — generating one before building.")
+    # An android/ folder existing is NOT the same as it being buildable.
+    # `flutter create`'s own default .gitignore template excludes gradlew,
+    # gradlew.bat, and gradle-wrapper.jar from version control — so any
+    # Flutter project exported from a normal git repo (the overwhelmingly
+    # common case for an upload) ships an android/ folder with everything
+    # EXCEPT a working Gradle wrapper. Checking only `android_dir.exists()`
+    # treats that as "already generated" and skips straight to
+    # `flutter build apk`, which then fails deep inside Flutter's own
+    # embedded Gradle invocation — almost always surfacing as a bare
+    # non-zero exit code with little explanation, since the underlying
+    # "Could not find or load main class ... GradleWrapperMain" happens a
+    # layer below what this process's own logging can see.
+    #
+    # `flutter create --platforms=android .` against a directory that
+    # already has a pubspec.yaml only ADDS files that don't already exist —
+    # it never overwrites pubspec.yaml, lib/, or any android/ file already
+    # present (that's what makes it safe to run unconditionally below, and
+    # what's meant by "the missing platform folder" in the original
+    # comment here). That same behavior makes it equally safe, and
+    # necessary, to re-run when android/ exists but its wrapper doesn't:
+    # it will fill in exactly the missing gradlew/gradle-wrapper.jar files
+    # without touching anything else in an already-present android/.
+    needs_regen = not android_dir.exists() or not gradlew_path.exists() or not gradle_wrapper_jar.exists()
+    if needs_regen:
+        if android_dir.exists():
+            log(
+                job,
+                "android/ folder is missing its Gradle wrapper (gradlew / gradle-wrapper.jar) — "
+                "this is expected for projects exported from git, since Flutter's default "
+                ".gitignore excludes them. Regenerating the missing files before building.",
+            )
+        else:
+            log(job, "No android/ folder in this project — generating one before building.")
         await ctx.run("flutter", ["create", "--platforms=android", f"--org={_flutter_org(APP_ID)}", "."])
-        if not android_dir.exists():
-            raise RuntimeError("flutter create ran but no android/ folder was produced.")
+        if not android_dir.exists() or not gradlew_path.exists() or not gradle_wrapper_jar.exists():
+            raise RuntimeError(
+                "flutter create ran but no working android/ Gradle wrapper (gradlew + "
+                "gradle-wrapper.jar) was produced."
+            )
 
     set_step(job, "Preparing Android manifest", 35)
     # Same reasoning as the native-android path above: search for every
