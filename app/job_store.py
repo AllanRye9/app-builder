@@ -50,6 +50,17 @@ class Job:
     # Set once validate.py has inspected the extracted project
     # ('capacitor-web', 'native-android', or 'flutter'); None until then.
     project_type: str | None = None
+    # True while a running build's subprocess (and every process it forked,
+    # via SIGSTOP on the whole process group) is genuinely suspended — see
+    # build_runner._BuildContext.pause()/resume(). Distinct from `status`,
+    # which stays 'building' the whole time a build is paused; this is the
+    # sub-flag the UI's pause/resume control actually reflects.
+    paused: bool = False
+    # The exit code of the command that actually failed, when `status` is
+    # 'failed' and the failure was a non-zero process exit (as opposed to a
+    # timeout, an internal server error, etc.) — None otherwise. Powers the
+    # exit-code-aware messaging in the error banner and the assistant panel.
+    exit_code: int | None = None
 
 
 class EventBus:
@@ -144,13 +155,35 @@ def set_step(job: Job, label: str, progress: int, **meta: Any) -> None:
     bus.publish(job.id, "step", payload)
 
 
-def set_status(job: Job, status: str, error: str | None = None) -> None:
+def set_status(job: Job, status: str, error: str | None = None, *, exit_code: int | None = None) -> None:
     job.status = status
     if error:
         job.error = error
-    bus.publish(job.id, "status", {"status": status, "error": job.error})
-    if status in ("success", "failed"):
-        bus.publish(job.id, "done", {"status": status, "error": job.error})
+    if exit_code is not None:
+        job.exit_code = exit_code
+    # A fresh 'queued'/'validating' transition (a first upload, or a
+    # rebuild after edits) means whatever exit code a *previous* attempt
+    # ended on no longer applies to this one.
+    if status in ("queued", "validating"):
+        job.exit_code = None
+    if status != "building":
+        job.paused = False
+    payload: dict[str, Any] = {"status": status, "error": job.error}
+    if job.exit_code is not None:
+        payload["exitCode"] = job.exit_code
+    bus.publish(job.id, "status", payload)
+    if status in ("success", "failed", "stopped"):
+        bus.publish(job.id, "done", payload)
+
+
+def set_paused(job: Job, paused: bool) -> None:
+    """Reflects _BuildContext.pause()/resume() (see build_runner.py) — a
+    genuine SIGSTOP/SIGCONT of the running build's whole process group, not
+    a kill-and-requeue. `status` deliberately stays 'building' throughout;
+    this is the orthogonal flag the UI's pause/resume control watches.
+    """
+    job.paused = paused
+    bus.publish(job.id, "paused", {"paused": paused})
 
 
 def purge_job(job: Job) -> None:

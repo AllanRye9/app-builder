@@ -139,7 +139,7 @@ export async function uploadZip(file, permissions = []) {
   return data.jobId;
 }
 
-export function streamLogs(jobId, { onLog, onNotice, onStatus, onQueue, onStep, onDone }) {
+export function streamLogs(jobId, { onLog, onNotice, onStatus, onQueue, onStep, onPaused, onDone }) {
   // Uses whichever base the upload for this job actually succeeded
   // against (see fetchWithFallback above) rather than re-probing here —
   // EventSource has no built-in concept of "try this other host instead".
@@ -172,6 +172,13 @@ export function streamLogs(jobId, { onLog, onNotice, onStatus, onQueue, onStep, 
     onStep?.(JSON.parse(e.data));
   });
 
+  // Genuine pause/resume of the running build process (SIGSTOP/SIGCONT —
+  // see app/build_runner.py), not a status transition — `status` stays
+  // 'building' throughout, this is the orthogonal flag.
+  source.addEventListener('paused', (e) => {
+    onPaused?.(JSON.parse(e.data));
+  });
+
   source.addEventListener('done', (e) => {
     onDone?.(JSON.parse(e.data));
     source.close();
@@ -182,6 +189,76 @@ export function streamLogs(jobId, { onLog, onNotice, onStatus, onQueue, onStep, 
   source.onerror = () => {};
 
   return () => source.close();
+}
+
+// ---------------------------------------------------------------------------
+// Build control: pause / resume / cancel / rebuild
+// ---------------------------------------------------------------------------
+// Pause/resume genuinely suspend and continue the build's own running
+// process (see app/build_runner.py) rather than kill-and-restart it.
+// Cancel kills it (or dequeues it) outright; rebuild re-runs the job from
+// its current on-disk project files afterward.
+
+async function postJobAction(jobId, action) {
+  const res = await fetchWithFallback(`/api/jobs/${jobId}/${action}`, { method: 'POST' });
+  return parseJsonResponse(res, `Could not ${action} the build`);
+}
+
+export const pauseBuild = (jobId) => postJobAction(jobId, 'pause');
+export const resumeBuild = (jobId) => postJobAction(jobId, 'resume');
+export const cancelBuild = (jobId) => postJobAction(jobId, 'cancel');
+export const rebuildJob = (jobId) => postJobAction(jobId, 'rebuild');
+
+// ---------------------------------------------------------------------------
+// Project file browser / quick-fix editor
+// ---------------------------------------------------------------------------
+// Operates on the job's own extracted project directory server-side — see
+// app/project_files.py. Meant for small, targeted edits (a typo in a
+// Gradle file, a missing manifest permission) before hitting Rebuild, not
+// a full development environment.
+
+export async function fetchProjectFiles(jobId) {
+  const res = await fetchWithFallback(`/api/jobs/${jobId}/files`);
+  return parseJsonResponse(res, 'Could not load the project file list');
+}
+
+export async function fetchProjectFileContent(jobId, path) {
+  const res = await fetchWithFallback(`/api/jobs/${jobId}/files/content?path=${encodeURIComponent(path)}`);
+  return parseJsonResponse(res, `Could not open ${path}`);
+}
+
+export async function saveProjectFileContent(jobId, path, content) {
+  const res = await fetchWithFallback(`/api/jobs/${jobId}/files/content`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ path, content }),
+  });
+  return parseJsonResponse(res, `Could not save ${path}`);
+}
+
+export async function createProjectFile(jobId, path, { isDir = false, content = '' } = {}) {
+  const res = await fetchWithFallback(`/api/jobs/${jobId}/files`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ path, isDir, content }),
+  });
+  return parseJsonResponse(res, `Could not create ${path}`);
+}
+
+export async function deleteProjectFile(jobId, path) {
+  const res = await fetchWithFallback(`/api/jobs/${jobId}/files?path=${encodeURIComponent(path)}`, {
+    method: 'DELETE',
+  });
+  return parseJsonResponse(res, `Could not delete ${path}`);
+}
+
+export async function renameProjectFile(jobId, fromPath, toPath) {
+  const res = await fetchWithFallback(`/api/jobs/${jobId}/files`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ from: fromPath, to: toPath }),
+  });
+  return parseJsonResponse(res, `Could not rename ${fromPath}`);
 }
 
 export function downloadUrl(jobId) {

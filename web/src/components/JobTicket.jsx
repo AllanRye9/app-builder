@@ -1,10 +1,11 @@
-import { memo, useEffect, useRef, useState } from 'react';
+import { memo, useCallback, useEffect, useRef, useState } from 'react';
 import Pipeline from './Pipeline.jsx';
 import LogPanel from './LogPanel.jsx';
 import DownloadCard from './DownloadCard.jsx';
 import ErrorBanner from './ErrorBanner.jsx';
 import FileTree from './FileTree.jsx';
-import { streamLogs } from '../api.js';
+import ProjectExplorer from './ProjectExplorer.jsx';
+import { streamLogs, pauseBuild, resumeBuild, cancelBuild, rebuildJob } from '../api.js';
 
 // How often batched log lines are flushed into rendered state, in ms. A
 // Gradle/npm build can emit hundreds of lines within a couple of seconds;
@@ -25,9 +26,19 @@ function JobTicket({ job, onUpdate, onDone, onNotice, onRemove }) {
   const [logs, setLogs] = useState([]);
   const [stage, setStage] = useState('validating');
   const [expanded, setExpanded] = useState(false);
+  const [filesOpen, setFilesOpen] = useState(false);
   const [buildStep, setBuildStep] = useState(null);
   const [buildProgress, setBuildProgress] = useState(0);
   const [cacheHit, setCacheHit] = useState(false);
+  const [paused, setPaused] = useState(false);
+  const [exitCode, setExitCode] = useState(null);
+  const [controlBusy, setControlBusy] = useState(false);
+  const [controlMessage, setControlMessage] = useState(null);
+  // Bumped on every rebuild — included in the SSE-subscribing effect's
+  // dependency array so a rebuild (same job.id, freshly re-queued on the
+  // server) opens a brand new log stream instead of reusing the closed one
+  // from the previous attempt.
+  const [buildKey, setBuildKey] = useState(0);
   const doneFired = useRef(false);
   // Authoritative full history, updated synchronously on every line — used
   // for the log tail handed to onDone, independent of how the *rendered*
@@ -39,6 +50,21 @@ function JobTicket({ job, onUpdate, onDone, onNotice, onRemove }) {
 
   useEffect(() => {
     if (!job.id) return undefined;
+
+    // A rebuild reuses this same job.id but starts a fresh attempt —
+    // reset every per-attempt piece of local state so old logs/progress
+    // from a previous try don't linger under the new one.
+    setLogs([]);
+    setStage('validating');
+    setBuildStep(null);
+    setBuildProgress(0);
+    setCacheHit(false);
+    setPaused(false);
+    setExitCode(null);
+    setControlMessage(null);
+    doneFired.current = false;
+    logsRef.current = [];
+    pendingLogsRef.current = [];
 
     const flushLogs = () => {
       flushTimerRef.current = null;
@@ -62,9 +88,11 @@ function JobTicket({ job, onUpdate, onDone, onNotice, onRemove }) {
       },
       onNotice: (payload) =>
         onNotice({ ...payload, title: payload.title ? `${job.fileName} — ${payload.title}` : job.fileName }),
-      onStatus: ({ status, error }) => {
+      onStatus: ({ status, error, exitCode: code }) => {
         onUpdate(job.tempId, { status, error: error ?? null });
-        if (status !== 'success' && status !== 'failed') setStage(status);
+        setExitCode(code ?? null);
+        if (status !== 'success' && status !== 'failed' && status !== 'stopped') setStage(status);
+        if (status !== 'building') setPaused(false);
       },
       onQueue: ({ position }) => onUpdate(job.tempId, { queuePosition: position }),
       onStep: ({ step, progress, cacheHit: hit }) => {
@@ -72,7 +100,8 @@ function JobTicket({ job, onUpdate, onDone, onNotice, onRemove }) {
         setBuildProgress(progress || 0);
         if (hit) setCacheHit(true);
       },
-      onDone: ({ status, error }) => {
+      onPaused: ({ paused: p }) => setPaused(!!p),
+      onDone: ({ status, error, exitCode: code }) => {
         // Flush any lines still sitting in the batch buffer immediately, so
         // an open log panel is fully caught up by the moment the build is
         // reported finished rather than waiting for the next timer tick.
@@ -80,16 +109,19 @@ function JobTicket({ job, onUpdate, onDone, onNotice, onRemove }) {
           window.clearTimeout(flushTimerRef.current);
         }
         flushLogs();
+        setPaused(false);
+        setExitCode(code ?? null);
         onUpdate(job.tempId, { status, error: error || null, downloadReady: status === 'success' });
-        // Only advance the stepper on success. On failure, leave `stage` as
-        // whatever the last onStatus already set it to — that's the stage
-        // the build actually failed at. (Setting it here from this closure
-        // would use a stale value: this effect only depends on job.id, so
-        // it never re-runs to pick up later `stage` updates.)
+        // Only advance the stepper on success. On failure/stop, leave
+        // `stage` as whatever the last onStatus already set it to —
+        // that's the stage the build actually ended at. (Setting it here
+        // from this closure would use a stale value: this effect only
+        // depends on job.id/buildKey, so it never re-runs to pick up
+        // later `stage` updates.)
         if (status === 'success') setStage('success');
         if (!doneFired.current) {
           doneFired.current = true;
-          onDone(job.tempId, job.fileName, status, error, logsRef.current);
+          onDone(job.tempId, job.id, job.fileName, status, error, logsRef.current, code ?? null);
         }
       },
     });
@@ -103,16 +135,47 @@ function JobTicket({ job, onUpdate, onDone, onNotice, onRemove }) {
     };
     // job.fileName/job.tempId/onNotice/onUpdate/onDone are stable enough
     // for this subscription's lifetime — only the id transitioning from
-    // null to a real value should re-run it.
+    // null to a real value, or a rebuild bumping buildKey, should re-run it.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [job.id]);
+  }, [job.id, buildKey]);
 
-  const isTerminal = job.status === 'success' || job.status === 'failed';
+  const isTerminal = job.status === 'success' || job.status === 'failed' || job.status === 'stopped';
+  const isRunning = job.status === 'building';
+  const canControl = job.id && isRunning;
+
+  const runControl = useCallback(
+    async (action, label) => {
+      if (controlBusy) return;
+      setControlBusy(true);
+      setControlMessage(null);
+      try {
+        const result = await action();
+        if (result && result.ok === false) {
+          setControlMessage(result.message || `Could not ${label}.`);
+        }
+      } catch (err) {
+        setControlMessage(err.message || `Could not ${label}.`);
+      } finally {
+        setControlBusy(false);
+      }
+    },
+    [controlBusy]
+  );
+
+  const handlePause = () => runControl(() => pauseBuild(job.id), 'pause');
+  const handleResume = () => runControl(() => resumeBuild(job.id), 'resume');
+  const handleCancel = () => runControl(() => cancelBuild(job.id), 'stop');
+  const handleRebuild = () => runControl(async () => {
+    const result = await rebuildJob(job.id);
+    onUpdate(job.tempId, { status: 'queued', error: null, downloadReady: false });
+    setBuildKey((k) => k + 1);
+    return result;
+  }, 'rebuild');
 
   return (
-    <article className={`ticket ticket-${job.status}`}>
+    <article className={`ticket ticket-${job.status}${paused ? ' ticket-paused' : ''}`}>
       <div className="ticket-stub" aria-hidden="true">
-        <StatusGlyph status={job.status} />
+        <StatusGlyph status={job.status} paused={paused} />
       </div>
 
       <div className="ticket-body">
@@ -133,15 +196,47 @@ function JobTicket({ job, onUpdate, onDone, onNotice, onRemove }) {
         <Pipeline
           activeStage={stage}
           failed={job.status === 'failed'}
+          stopped={job.status === 'stopped'}
+          paused={paused}
           queuePosition={job.queuePosition}
           buildStep={buildStep}
           buildProgress={buildProgress}
           cacheHit={cacheHit}
         />
 
+        {(canControl || job.status === 'failed' || job.status === 'stopped') && (
+          <div className="build-controls">
+            {canControl && !paused && (
+              <button type="button" className="control-btn" onClick={handlePause} disabled={controlBusy}>
+                ⏸ Pause
+              </button>
+            )}
+            {canControl && paused && (
+              <button type="button" className="control-btn control-btn-resume" onClick={handleResume} disabled={controlBusy}>
+                ▶ Resume
+              </button>
+            )}
+            {canControl && (
+              <button type="button" className="control-btn control-btn-stop" onClick={handleCancel} disabled={controlBusy}>
+                ■ Stop
+              </button>
+            )}
+            {(job.status === 'failed' || job.status === 'stopped') && (
+              <button type="button" className="control-btn control-btn-rebuild" onClick={handleRebuild} disabled={controlBusy}>
+                ↻ Rebuild
+              </button>
+            )}
+            {controlMessage && <span className="control-message">{controlMessage}</span>}
+          </div>
+        )}
+
         {job.file && <FileTree file={job.file} />}
 
-        <ErrorBanner message={job.status === 'failed' ? job.error : ''} />
+        <ErrorBanner
+          message={job.status === 'failed' ? job.error : ''}
+          exitCode={job.status === 'failed' ? exitCode : null}
+        />
+        {job.status === 'stopped' && <div className="stopped-box">Build stopped. Edit files below if needed, then Rebuild.</div>}
 
         {job.status === 'success' && <DownloadCard jobId={job.id} filename={job.fileName} />}
 
@@ -152,6 +247,18 @@ function JobTicket({ job, onUpdate, onDone, onNotice, onRemove }) {
               {expanded ? 'Hide build log' : 'Show build log'}
             </button>
             {expanded && <LogPanel lines={logs} live={!isTerminal} />}
+          </div>
+        )}
+
+        {job.id && (job.status === 'failed' || job.status === 'stopped' || job.status === 'success' || paused) && (
+          <div className="ticket-files">
+            <button className="log-toggle" onClick={() => setFilesOpen((e) => !e)} aria-expanded={filesOpen}>
+              <span className={`log-toggle-caret${filesOpen ? ' open' : ''}`} aria-hidden="true">▸</span>
+              {filesOpen ? 'Hide project files' : 'Edit project files'}
+            </button>
+            {filesOpen && (
+              <ProjectExplorer jobId={job.id} readOnly={isRunning && !paused} />
+            )}
           </div>
         )}
       </div>
@@ -165,9 +272,11 @@ function JobTicket({ job, onUpdate, onDone, onNotice, onRemove }) {
 // for every OTHER ticket whenever just one job's status/logs change.
 export default memo(JobTicket);
 
-function StatusGlyph({ status }) {
+function StatusGlyph({ status, paused }) {
+  if (paused) return <span className="glyph glyph-paused">⏸</span>;
   if (status === 'success') return <span className="glyph glyph-success">✓</span>;
   if (status === 'failed') return <span className="glyph glyph-failed">!</span>;
+  if (status === 'stopped') return <span className="glyph glyph-stopped">■</span>;
   if (status === 'building') return <span className="glyph glyph-building" />;
   return <span className="glyph glyph-queued" />;
 }

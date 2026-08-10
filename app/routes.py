@@ -14,16 +14,17 @@ from pathlib import Path
 import psutil
 from fastapi import APIRouter, BackgroundTasks, Depends, Form, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from . import build_runner
 from .config import settings
-from .job_store import bus, create_job, jobs, log, notice, purge_job, set_status
+from .job_store import Job, bus, create_job, jobs, log, notice, purge_job, set_status
 from .permissions import sanitize_permissions
 from .validate import ValidationError, validate_and_extract
 from . import visitors
 from . import auth
 from . import assist
+from . import project_files
 
 router = APIRouter()
 
@@ -40,6 +41,13 @@ _UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 # (or push this to a reverse proxy) if this ever runs as multiple instances
 # behind a load balancer, since this state is per-process.
 _upload_hits: dict[str, list[float]] = {}
+
+
+def _require_job(job_id: str) -> Job:
+    job = jobs.get(job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="Unknown job id.")
+    return job
 
 
 def _client_ip(request: Request) -> str:
@@ -267,7 +275,172 @@ async def get_status(job_id: str, user: auth.User = Depends(auth.require_auth)) 
         "permissions": job.permissions,
         "step": job.step,
         "stepProgress": job.step_progress,
+        "paused": job.paused,
+        "exitCode": job.exit_code,
     }
+
+
+# ---------------------------------------------------------------------------
+# Build control: pause / resume / cancel / rebuild
+# ---------------------------------------------------------------------------
+# Pause/resume genuinely suspend and continue the running build's own
+# subprocess (SIGSTOP/SIGCONT on its whole process group — see
+# build_runner._BuildContext) rather than kill-and-restart. Cancel kills it
+# outright (or dequeues it if it hadn't started yet). Rebuild re-runs a
+# job's build from its current on-disk project files — the natural next
+# step after cancelling to make an edit, or after a straight build failure.
+
+
+@router.post("/jobs/{job_id}/pause")
+async def pause_job(job_id: str, user: auth.User = Depends(auth.require_auth)) -> dict:
+    job = _require_job(job_id)
+    ok, message = await build_runner.pause_job(job_id)
+    return {"ok": ok, "message": message, "paused": job.paused}
+
+
+@router.post("/jobs/{job_id}/resume")
+async def resume_job(job_id: str, user: auth.User = Depends(auth.require_auth)) -> dict:
+    job = _require_job(job_id)
+    ok, message = await build_runner.resume_job(job_id)
+    return {"ok": ok, "message": message, "paused": job.paused}
+
+
+@router.post("/jobs/{job_id}/cancel")
+async def cancel_job(job_id: str, user: auth.User = Depends(auth.require_auth)) -> dict:
+    _require_job(job_id)
+    ok, message = await build_runner.cancel_job(job_id)
+    if not ok:
+        raise HTTPException(status_code=409, detail=message)
+    return {"ok": True, "message": message}
+
+
+@router.post("/jobs/{job_id}/rebuild")
+async def rebuild_job(job_id: str, user: auth.User = Depends(auth.require_auth)) -> dict:
+    """Re-runs the build using whatever's currently on disk under
+    job.project_dir — the same extracted project, plus any edits made via
+    the file endpoints below. Existing dependency/Gradle caches are
+    reused exactly as they would be for a brand new job with the same
+    lockfile, so a rebuild after a small fix is typically much faster
+    than the original build.
+    """
+    job = _require_job(job_id)
+    if job.status in ("queued", "validating", "building"):
+        raise HTTPException(status_code=409, detail="This build is already running.")
+    if not job.project_dir.exists():
+        raise HTTPException(status_code=409, detail="No project files remain for this job — please re-upload.")
+
+    job.error = None
+    job.exit_code = None
+    job.step = None
+    job.step_progress = 0
+    job.apk_path = None
+    job.logs = []
+    job.notices = []
+    set_status(job, "queued")
+    log(job, "Rebuild requested — re-running the build with the current project files.")
+    build_runner.enqueue(job)
+    return {"ok": True, "jobId": job.id}
+
+
+# ---------------------------------------------------------------------------
+# Project file browser / quick-fix editor
+# ---------------------------------------------------------------------------
+# Operates directly on job.project_dir — the same extracted source the
+# next build (or rebuild) will run against. Meant for small, targeted
+# corrections (a typo in a Gradle file, a missing config value) prompted
+# by a build failure, not a full development environment — see
+# project_files.py for the size/type limits this enforces.
+
+
+def _file_api_error(exc: project_files.FileApiError) -> HTTPException:
+    return HTTPException(status_code=exc.status_code, detail=str(exc))
+
+
+@router.get("/jobs/{job_id}/files")
+async def list_project_files(job_id: str, user: auth.User = Depends(auth.require_auth)) -> dict:
+    job = _require_job(job_id)
+    return project_files.build_tree(job.project_dir)
+
+
+@router.get("/jobs/{job_id}/files/content")
+async def get_project_file(job_id: str, path: str, user: auth.User = Depends(auth.require_auth)) -> dict:
+    job = _require_job(job_id)
+    try:
+        return project_files.read_file(job.project_dir, path)
+    except project_files.FileApiError as exc:
+        raise _file_api_error(exc) from exc
+
+
+class FileContentBody(BaseModel):
+    path: str
+    content: str
+
+
+@router.put("/jobs/{job_id}/files/content")
+async def save_project_file(
+    job_id: str, body: FileContentBody, user: auth.User = Depends(auth.require_auth)
+) -> dict:
+    job = _require_job(job_id)
+    try:
+        result = project_files.write_file(job.project_dir, body.path, body.content, create=False)
+    except project_files.FileApiError as exc:
+        raise _file_api_error(exc) from exc
+    log(job, f"Edited {body.path} via the in-browser editor.")
+    return result
+
+
+class CreateFileBody(BaseModel):
+    path: str
+    isDir: bool = False
+    content: str = ""
+
+
+@router.post("/jobs/{job_id}/files")
+async def create_project_file(
+    job_id: str, body: CreateFileBody, user: auth.User = Depends(auth.require_auth)
+) -> dict:
+    job = _require_job(job_id)
+    try:
+        if body.isDir:
+            result = project_files.create_dir(job.project_dir, body.path)
+        else:
+            result = project_files.write_file(job.project_dir, body.path, body.content, create=True)
+    except project_files.FileApiError as exc:
+        raise _file_api_error(exc) from exc
+    log(job, f"Added {'folder' if body.isDir else 'file'} {body.path} via the in-browser editor.")
+    return result
+
+
+@router.delete("/jobs/{job_id}/files")
+async def delete_project_file(job_id: str, path: str, user: auth.User = Depends(auth.require_auth)) -> dict:
+    job = _require_job(job_id)
+    try:
+        result = project_files.delete_path(job.project_dir, path)
+    except project_files.FileApiError as exc:
+        raise _file_api_error(exc) from exc
+    log(job, f"Deleted {path} via the in-browser editor.")
+    return result
+
+
+class RenameFileBody(BaseModel):
+    from_path: str = Field(alias="from")
+    to: str
+
+    class Config:
+        populate_by_name = True
+
+
+@router.patch("/jobs/{job_id}/files")
+async def rename_project_file(
+    job_id: str, body: RenameFileBody, user: auth.User = Depends(auth.require_auth)
+) -> dict:
+    job = _require_job(job_id)
+    try:
+        result = project_files.rename_path(job.project_dir, body.from_path, body.to)
+    except project_files.FileApiError as exc:
+        raise _file_api_error(exc) from exc
+    log(job, f"Renamed {body.from_path} → {body.to} via the in-browser editor.")
+    return result
 
 
 def _sse(event: str | None, data: object) -> str:
@@ -287,11 +460,13 @@ async def stream_logs(job_id: str, request: Request, user: auth.User = Depends(a
             yield _sse(None, line)
         for entry in job.notices:
             yield _sse("notice", entry)
-        yield _sse("status", {"status": job.status, "error": job.error})
+        yield _sse("status", {"status": job.status, "error": job.error, "exitCode": job.exit_code})
         if job.queue_position is not None:
             yield _sse("queue", {"position": job.queue_position})
         if job.step:
             yield _sse("step", {"step": job.step, "progress": job.step_progress})
+        if job.paused:
+            yield _sse("paused", {"paused": True})
 
         # A job can already be terminal by the time the client connects —
         # e.g. an archive that fails validation goes straight to 'failed'
@@ -299,8 +474,8 @@ async def stream_logs(job_id: str, request: Request, user: auth.User = Depends(a
         # Without this, that client would never see a 'done' event and
         # would be stuck showing "queued" forever. Same fix also makes a
         # reconnect/second tab work correctly for any already-finished job.
-        if job.status in ("success", "failed"):
-            yield _sse("done", {"status": job.status, "error": job.error})
+        if job.status in ("success", "failed", "stopped"):
+            yield _sse("done", {"status": job.status, "error": job.error, "exitCode": job.exit_code})
             return
 
         queue = bus.subscribe(job_id)

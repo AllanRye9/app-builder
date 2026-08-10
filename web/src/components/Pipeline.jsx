@@ -17,7 +17,16 @@ const ORDER = STAGES.map((s) => s.key);
 // *where* in the pipeline a build is, the detail line + bar says *what's
 // actually happening right now* and roughly how far along it is, instead of
 // "Build" sitting there unchanged for however many minutes Gradle takes.
-export default function Pipeline({ activeStage, failed, queuePosition, buildStep, buildProgress, cacheHit }) {
+export default function Pipeline({
+  activeStage,
+  failed,
+  stopped,
+  paused,
+  queuePosition,
+  buildStep,
+  buildProgress,
+  cacheHit,
+}) {
   const activeIndex = ORDER.indexOf(activeStage);
 
   return (
@@ -26,16 +35,24 @@ export default function Pipeline({ activeStage, failed, queuePosition, buildStep
         {STAGES.map((stage, i) => {
           let state = '';
           if (failed && i === activeIndex) state = 'failed';
+          else if (stopped && i === activeIndex) state = 'stopped';
           else if (i < activeIndex) state = 'done';
           else if (i === activeIndex) state = activeStage === 'success' ? 'done' : 'active';
 
           const showPosition = state === 'active' && stage.key === 'queued' && queuePosition > 0;
+          const showPaused = state === 'active' && paused && stage.key === 'building';
 
           return (
-            <div key={stage.key} role="listitem" className={`step ${state}`}>
-              <span className="step-dot">{state === 'done' ? '✓' : state === 'failed' ? '!' : ''}</span>
+            <div key={stage.key} role="listitem" className={`step ${state}${showPaused ? ' paused' : ''}`}>
+              <span className="step-dot">
+                {state === 'done' ? '✓' : state === 'failed' ? '!' : state === 'stopped' ? '■' : showPaused ? '⏸' : ''}
+              </span>
               <span className="step-label">
-                {showPosition ? `${ordinal(queuePosition)} in line` : stage.label}
+                {showPosition
+                  ? `${ordinal(queuePosition)} in line`
+                  : showPaused
+                    ? 'Paused'
+                    : stage.label}
               </span>
               {i < STAGES.length - 1 && <span className="step-rule" aria-hidden="true" />}
             </div>
@@ -43,10 +60,11 @@ export default function Pipeline({ activeStage, failed, queuePosition, buildStep
         })}
       </div>
 
-      {activeStage === 'building' && !failed && buildStep && (
+      {activeStage === 'building' && !failed && !stopped && buildStep && (
         <div className="pipeline-detail">
           <div className="pipeline-detail-row">
             <span className="pipeline-detail-label">{buildStep}</span>
+            {paused && <span className="paused-badge" title="Build process is suspended, not killed — Resume to continue exactly where it left off">⏸ paused</span>}
             {cacheHit && <span className="cache-badge" title="Reused a previously installed dependency tree — no re-download or re-install needed">⚡ cache hit</span>}
           </div>
           <div className="pipeline-detail-bar" role="progressbar" aria-valuenow={buildProgress || 0} aria-valuemin={0} aria-valuemax={100}>

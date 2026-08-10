@@ -38,7 +38,11 @@ _SYSTEM_PROMPT = (
     "a line to add), in 2-4 short paragraphs or a short list. Don't pad with "
     "reassurance or ask clarifying questions unless the error message genuinely "
     "could mean more than one thing. You don't have shell access and can't see "
-    "anything beyond what's included in this message."
+    "anything beyond what's included in this message. The person can open a "
+    "quick-fix editor for any file in their uploaded project right from this "
+    "panel — if the fix is a small, targeted change to one specific file (a "
+    "config value, a manifest entry, a missing dependency line), name that "
+    "exact file path so they know what to open."
 )
 
 
@@ -100,11 +104,55 @@ def _format_context(context: dict[str, Any]) -> str:
         lines.append(f"- Project type: {context['projectType']}")
     if context.get("errorMessage"):
         lines.append(f"- Error: {context['errorMessage']}")
+    if context.get("exitCode") is not None:
+        lines.append(f"- Process exit code: {context['exitCode']}")
     log_tail = context.get("logTail")
     if log_tail:
         tail = "\n".join(str(l) for l in log_tail[-25:])
         lines.append(f"- Last log lines:\n{tail}")
     return "\n".join(lines)
+
+
+# ---------------------------------------------------------------------------
+# Exit-code-aware hints — layered on top of (not a replacement for) the
+# keyword patterns below, since a bare exit code is a weaker signal than
+# matched error text but is always available even when the log itself
+# doesn't say much (see build_runner.py's lines_captured==0 case).
+# ---------------------------------------------------------------------------
+_EXIT_CODE_HINTS: dict[int, str] = {
+    126: "Exit code 126 means the command was found but couldn't be executed — usually a permissions "
+    "problem (needs chmod +x) rather than anything wrong with the build logic itself.",
+    127: "Exit code 127 means 'command not found' — a required executable isn't on PATH inside the "
+    "build container. If this is your own script, double check the shebang and that the tool it "
+    "calls is actually a declared dependency.",
+    137: "Exit code 137 means the process was killed by SIGKILL — overwhelmingly the container's "
+    "out-of-memory killer (or the build was stopped mid-run). If it's OOM, try lowering "
+    "MAX_CONCURRENT_BUILDS or giving the container more memory.",
+    143: "Exit code 143 means the process received SIGTERM — something asked it to shut down, which "
+    "for a build usually means a timeout or an external stop request rather than a code error.",
+    134: "Exit code 134 (SIGABRT) usually means a native crash — for a JVM-based build this can point "
+    "to a JIT/native-library bug rather than the project's own source.",
+    139: "Exit code 139 (SIGSEGV) is a segmentation fault in a native process — not something fixable "
+    "by editing the app's own source; it usually means an incompatible native binary/toolchain.",
+    65: "Exit code 65 (EX_DATAERR) means malformed input was fed to a tool — check for an invalid "
+    "config, manifest, or JSON/YAML file rather than a code logic error.",
+    78: "Exit code 78 (EX_CONFIG) points at a configuration problem — check the relevant config file "
+    "(gradle.properties, capacitor.config, pubspec.yaml, etc.) for a missing or malformed value.",
+}
+
+
+def _exit_code_note(exit_code: int | None) -> str | None:
+    if exit_code is None:
+        return None
+    if exit_code in _EXIT_CODE_HINTS:
+        return _EXIT_CODE_HINTS[exit_code]
+    if 128 < exit_code <= 165:
+        return (
+            f"Exit code {exit_code} means the process was killed by signal {exit_code - 128} — "
+            "that's an external termination (OOM killer, timeout, or a manual stop), not a normal "
+            "build-logic failure."
+        )
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -185,7 +233,13 @@ def _fallback_answer(question: str, context: dict[str, Any]) -> str:
             " ".join(str(l) for l in (context.get("logTail") or [])).lower(),
         ]
     )
+
+    exit_note = _exit_code_note(context.get("exitCode"))
+
     for keywords, advice in _PATTERNS:
         if any(kw in haystack for kw in keywords):
-            return advice
+            return f"{advice}\n\n{exit_note}" if exit_note else advice
+
+    if exit_note:
+        return f"{exit_note}\n\n{_GENERIC_FALLBACK}"
     return _GENERIC_FALLBACK

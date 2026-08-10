@@ -195,15 +195,17 @@ function Dashboard({ user, onLogout }) {
     pushToast({ level: 'warning', title: 'Not accepted', message });
   }
 
-  const handleJobDone = useCallback((tempId, fileName, status, error, logTail) => {
+  const handleJobDone = useCallback((tempId, jobId, fileName, status, error, logTail, exitCode) => {
     if (status === 'success') {
       pushToast({ level: 'success', title: 'Build complete', message: `${fileName} is ready to download.` });
       notifyBrowser('Build complete', `${fileName} is ready to download.`);
+    } else if (status === 'stopped') {
+      pushToast({ level: 'warning', title: 'Build stopped', message: `${fileName} was stopped.` });
     } else {
       const message = error || `${fileName} failed to build.`;
       pushToast({ level: 'error', title: 'Build failed', message });
       notifyBrowser('Build failed', message);
-      setErrorContext({ fileName, errorMessage: message, logTail: logTail || [] });
+      setErrorContext({ jobId, fileName, errorMessage: message, logTail: logTail || [], exitCode: exitCode ?? null });
     }
   }, [pushToast]);
 
@@ -212,11 +214,28 @@ function Dashboard({ user, onLogout }) {
       if (j.status === 'building') acc.building += 1;
       else if (j.status === 'success') acc.done += 1;
       else if (j.status === 'failed') acc.failed += 1;
+      else if (j.status === 'stopped') acc.stopped += 1;
       else acc.queued += 1; // uploading | validating | queued
       return acc;
     },
-    { building: 0, queued: 0, done: 0, failed: 0 }
+    { building: 0, queued: 0, done: 0, failed: 0, stopped: 0 }
   );
+
+  // Group tickets by where they are in their lifecycle rather than showing
+  // one flat, constantly-reshuffling list — a build that just failed should
+  // never be sandwiched between two that are still running. Each group
+  // keeps the jobs' existing relative order (most-recently-started first).
+  // 'uploading' and 'validating' are still effectively "running" from the
+  // person's point of view (there's no user action to take yet), so they're
+  // grouped with 'building'/'queued' rather than getting their own section.
+  const ticketGroups = [
+    { key: 'running', title: 'Running', match: (j) => !isTerminalStatus(j.status) },
+    { key: 'success', title: 'Successful', match: (j) => j.status === 'success' },
+    { key: 'failed', title: 'Failed', match: (j) => j.status === 'failed' },
+    { key: 'stopped', title: 'Stopped', match: (j) => j.status === 'stopped' },
+  ]
+    .map((group) => ({ ...group, jobs: jobs.filter(group.match) }))
+    .filter((group) => group.jobs.length > 0);
 
   return (
     <div className="app-frame">
@@ -261,6 +280,7 @@ function Dashboard({ user, onLogout }) {
                 <Stat value={counts.queued} label="waiting" tone="queued" />
                 <Stat value={counts.done} label="done" tone="done" />
                 {counts.failed > 0 && <Stat value={counts.failed} label="failed" tone="failed" />}
+                {counts.stopped > 0 && <Stat value={counts.stopped} label="stopped" tone="stopped" />}
               </div>
             )}
 
@@ -278,15 +298,23 @@ function Dashboard({ user, onLogout }) {
                   <div className="empty-floor-sub">Drop a project above to start your first build.</div>
                 </div>
               ) : (
-                jobs.map((job) => (
-                  <JobTicket
-                    key={job.tempId}
-                    job={job}
-                    onUpdate={patchJob}
-                    onDone={handleJobDone}
-                    onNotice={pushToast}
-                    onRemove={removeJob}
-                  />
+                ticketGroups.map((group) => (
+                  <div className={`ticket-group ticket-group-${group.key}`} key={group.key}>
+                    <div className="ticket-group-title">
+                      {group.title}
+                      <span className="ticket-group-count">{group.jobs.length}</span>
+                    </div>
+                    {group.jobs.map((job) => (
+                      <JobTicket
+                        key={job.tempId}
+                        job={job}
+                        onUpdate={patchJob}
+                        onDone={handleJobDone}
+                        onNotice={pushToast}
+                        onRemove={removeJob}
+                      />
+                    ))}
+                  </div>
                 ))
               )}
             </div>
@@ -320,6 +348,13 @@ function Stat({ value, label, tone }) {
       <span className="stat-label">{label}</span>
     </div>
   );
+}
+
+// A job is "running" (from the floor's point of view) for as long as it's
+// anywhere short of one of these three end states — matches the statuses
+// JobTicket treats as terminal.
+function isTerminalStatus(status) {
+  return status === 'success' || status === 'failed' || status === 'stopped';
 }
 
 // Best-effort OS-level notification for when the tab is backgrounded — the

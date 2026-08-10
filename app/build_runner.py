@@ -20,9 +20,101 @@ import psutil
 
 from . import dep_cache
 from .config import settings
-from .job_store import Job, log, notice, set_queue_position, set_status, set_step
+from .job_store import Job, log, notice, set_paused, set_queue_position, set_status, set_step
 
 SHARED_BUILD_CACHE_INIT_SCRIPT = Path(__file__).with_name("shared-build-cache-init.gradle")
+
+
+class BuildCancelled(RuntimeError):
+    """Raised inside a build when the user pressed Stop — as opposed to a
+    genuine build failure. Kept as its own exception type so `_run_build`
+    can route it to the distinct 'stopped' status instead of 'failed'.
+    """
+
+
+class CommandFailed(RuntimeError):
+    """A command exited with a non-zero code. Carries that code separately
+    from the human-readable message so the job store / API / frontend can
+    all key off the number itself (badges, exit-code-specific troubleshoot
+    tips) without re-parsing it back out of a free-text string.
+    """
+
+    def __init__(self, message: str, exit_code: int) -> None:
+        super().__init__(message)
+        self.exit_code = exit_code
+
+
+def _normalize_exit_code(code: int) -> int:
+    """Python/asyncio reports a signal-terminated process as a *negative*
+    return code — e.g. -9 for SIGKILL — because these commands are run via
+    create_subprocess_exec() with no intervening shell (see run() below);
+    a shell would instead report the far more widely recognized 128+N
+    convention (137, 143, ...) that _describe_exit_code() below expects
+    and that people actually search for. Normalized once here, at the one
+    place a raw process return code enters the system, so job.exit_code,
+    the log line, the API response, and the assistant panel all agree.
+    """
+    if code < 0:
+        return 128 - code
+    return code
+
+
+def _describe_exit_code(code: int) -> str:
+    """Best-effort human explanation for a process's exit code — covers
+    the handful of conventional ranges every build tool ultimately exits
+    through, not just Gradle/npm's own usual '1':
+      - 0 is never passed in here (that's success).
+      - 1/2: generic tool-reported failure / bad invocation.
+      - 126/127: found-but-not-executable / not-found-on-PATH — almost
+        always an environment problem, not the project's own code.
+      - 128+N: the process was killed by signal N (128+9=137 is by far
+        the most common one seen here — either the container's OOM killer
+        or this app's own Stop button, both of which send SIGKILL).
+      - 64-78: the BSD sysexits.h range — some CLIs (and quite a few
+        Node/Python tools that follow the same convention) use these for
+        specific, structured failure categories rather than a bare '1'.
+    """
+    if code == 1:
+        return "general error — the tool reported a normal failure; see the log above for the specific message"
+    if code == 2:
+        return "misuse of the command — usually a bad/unsupported argument was passed to it"
+    if code == 126:
+        return "found but not executable — check the file's permissions (needs chmod +x) or that it isn't a directory"
+    if code == 127:
+        return "command not found — a required executable is missing from PATH inside the build container"
+    if 128 < code <= 165:
+        sig_num = code - 128
+        try:
+            sig_name = signal.Signals(sig_num).name
+        except ValueError:
+            sig_name = f"signal {sig_num}"
+        if sig_num == signal.SIGKILL:
+            return f"killed by {sig_name} — most often the container's out-of-memory killer, or the build was stopped"
+        if sig_num == signal.SIGTERM:
+            return f"terminated by {sig_name} — the process was asked to shut down"
+        if sig_num == signal.SIGABRT:
+            return f"aborted ({sig_name}) — often a native/JVM crash rather than a normal build error"
+        return f"terminated by {sig_name}"
+    sysexits = {
+        64: "command line usage error",
+        65: "data format error — malformed input was fed to the tool (e.g. an invalid config/manifest file)",
+        66: "cannot open input — a required input file was missing or unreadable",
+        67: "addressee unknown",
+        68: "host unknown",
+        69: "service unavailable",
+        70: "internal software error in the tool itself",
+        71: "operating system error",
+        72: "a critical OS file is missing",
+        73: "can't create the output file — check disk space/permissions",
+        74: "input/output error while reading or writing a file",
+        75: "temporary failure — worth simply retrying",
+        76: "remote protocol error",
+        77: "permission denied",
+        78: "configuration error",
+    }
+    if code in sysexits:
+        return sysexits[code]
+    return "non-zero exit — see the log above for the tool's own error output"
 
 APP_ID = os.environ.get("APP_ID", settings.APP_ID)
 APP_NAME = os.environ.get("APP_NAME", settings.APP_NAME)
@@ -89,6 +181,13 @@ _queue: list[Job] = []
 _running = 0
 _memory_recheck_scheduled = False
 
+# Every currently-running build's live control surface, keyed by job id —
+# how pause_job()/resume_job()/cancel_job() below (called from the
+# pause/resume/cancel API routes) find the actual OS process to signal.
+# Populated when a build starts running, removed the moment it finishes —
+# a job with no entry here is either still queued or already terminal.
+_contexts: dict[str, "_BuildContext"] = {}
+
 # Used when searching for *source* files (AndroidManifest.xml) — dependency
 # caches and Gradle's own intermediate build output are never what we want.
 _SOURCE_SEARCH_SKIP_DIRS = frozenset({"node_modules", ".git", "build", ".gradle", ".idea"})
@@ -107,6 +206,53 @@ def enqueue(job: Job) -> None:
 
 def get_build_counts() -> dict[str, int]:
     return {"running": _running, "queued": len(_queue)}
+
+
+def _remove_from_queue(job_id: str) -> Job | None:
+    for i, job in enumerate(_queue):
+        if job.id == job_id:
+            return _queue.pop(i)
+    return None
+
+
+async def pause_job(job_id: str) -> tuple[bool, str]:
+    """Suspends (SIGSTOP) every process a running build has spawned, in
+    place — genuinely pausing compilation rather than killing and later
+    re-running it. Only meaningful for a build that's actually running.
+    """
+    ctx = _contexts.get(job_id)
+    if ctx is None:
+        return False, "This build isn't currently running (it may be queued, or already finished)."
+    return await ctx.pause()
+
+
+async def resume_job(job_id: str) -> tuple[bool, str]:
+    """Resumes (SIGCONT) a build previously paused with pause_job() —
+    the same subprocess picks up exactly where it was suspended."""
+    ctx = _contexts.get(job_id)
+    if ctx is None:
+        return False, "This build isn't currently running."
+    return await ctx.resume()
+
+
+async def cancel_job(job_id: str) -> tuple[bool, str]:
+    """Stops a build outright: kills every process of a running build, or
+    simply removes a not-yet-started build from the queue. Distinct from
+    pause_job() — there's no picking this back up; see routes.py's
+    /rebuild endpoint for re-running the job from scratch afterward.
+    """
+    ctx = _contexts.get(job_id)
+    if ctx is not None:
+        return await ctx.cancel()
+
+    job = _remove_from_queue(job_id)
+    if job is not None:
+        set_status(job, "stopped", "Cancelled while waiting in the queue.")
+        log(job, "Build cancelled by user while still queued.")
+        _broadcast_queue_positions()
+        return True, "Removed from the queue."
+
+    return False, "This build isn't currently running or queued."
 
 
 def _broadcast_queue_positions() -> None:
@@ -235,17 +381,51 @@ class _BuildContext:
         self.current_process: asyncio.subprocess.Process | None = None
         self.timed_out = False
         self.timeout_task: asyncio.Task | None = None
+        # Pause/resume state — see pause()/resume() below. `paused` is the
+        # live flag; `pause_started_at`/`total_paused_s` let the timeout
+        # watchdog subtract paused time from its own countdown, so a build
+        # someone stepped away from mid-pause doesn't get killed the
+        # instant it's resumed just because the wall-clock timer expired
+        # while it was legitimately suspended.
+        self.paused = False
+        self.pause_started_at: float | None = None
+        self.total_paused_s = 0.0
+        self.cancelled = False
+
+    def _pgid(self) -> int | None:
+        if self.current_process is None:
+            return None
+        try:
+            return os.getpgid(self.current_process.pid)
+        except ProcessLookupError:
+            return None
 
     async def _timeout_watchdog(self) -> None:
-        await asyncio.sleep(settings.BUILD_TIMEOUT_MS / 1000)
+        # Ticks in small increments rather than one long sleep, so it can
+        # simply not count time spent paused — a build paused for longer
+        # than BUILD_TIMEOUT_MS must not be killed the moment it's
+        # resumed, since from the uploader's perspective no build time
+        # actually elapsed while it was suspended.
+        timeout_s = settings.BUILD_TIMEOUT_MS / 1000
+        tick_s = 1.0
+        active_elapsed = 0.0
+        while active_elapsed < timeout_s:
+            await asyncio.sleep(tick_s)
+            if not self.paused:
+                active_elapsed += tick_s
         self.timed_out = True
-        if self.current_process is not None:
+        pgid = self._pgid()
+        if pgid is not None:
             # Kill the whole process group, not just the immediate child —
             # Gradle forks its own JVM worker processes even with
             # --no-daemon; killing only the wrapper script would leave
-            # those orphaned instead of terminated.
+            # those orphaned instead of terminated. Wake it first in case
+            # it's currently paused — SIGKILL is not deliverable to a
+            # stopped process on some platforms until it's continued.
             with contextlib.suppress(ProcessLookupError, PermissionError):
-                os.killpg(os.getpgid(self.current_process.pid), signal.SIGKILL)
+                os.killpg(pgid, signal.SIGCONT)
+            with contextlib.suppress(ProcessLookupError, PermissionError):
+                os.killpg(pgid, signal.SIGKILL)
 
     def start_watchdog(self) -> None:
         self.timeout_task = asyncio.create_task(self._timeout_watchdog())
@@ -253,6 +433,61 @@ class _BuildContext:
     def cancel_watchdog(self) -> None:
         if self.timeout_task is not None:
             self.timeout_task.cancel()
+
+    async def pause(self) -> tuple[bool, str]:
+        if self.paused:
+            return False, "This build is already paused."
+        pgid = self._pgid()
+        if pgid is None:
+            return False, "No active build process to pause right now (it's between commands)."
+        try:
+            os.killpg(pgid, signal.SIGSTOP)
+        except (ProcessLookupError, PermissionError) as exc:
+            return False, f"Couldn't pause the build: {exc}"
+        self.paused = True
+        self.pause_started_at = time.monotonic()
+        set_paused(self.job, True)
+        log(self.job, "⏸ Build paused by user — the running process is suspended, not killed.")
+        return True, "Build paused."
+
+    async def resume(self) -> tuple[bool, str]:
+        if not self.paused:
+            return False, "This build isn't paused."
+        pgid = self._pgid()
+        if pgid is None:
+            # The process is gone (finished or was killed) while paused —
+            # nothing left to resume.
+            self.paused = False
+            set_paused(self.job, False)
+            return False, "The paused build process is no longer running."
+        try:
+            os.killpg(pgid, signal.SIGCONT)
+        except (ProcessLookupError, PermissionError) as exc:
+            return False, f"Couldn't resume the build: {exc}"
+        if self.pause_started_at is not None:
+            self.total_paused_s += time.monotonic() - self.pause_started_at
+            self.pause_started_at = None
+        self.paused = False
+        set_paused(self.job, False)
+        log(self.job, "▶ Build resumed by user.")
+        return True, "Build resumed."
+
+    async def cancel(self) -> tuple[bool, str]:
+        self.cancelled = True
+        pgid = self._pgid()
+        if pgid is not None:
+            # Wake it up first (SIGKILL isn't deliverable to a stopped
+            # process on every platform until it's continued), then kill
+            # the whole process group so nothing forked survives.
+            with contextlib.suppress(ProcessLookupError, PermissionError):
+                os.killpg(pgid, signal.SIGCONT)
+            with contextlib.suppress(ProcessLookupError, PermissionError):
+                os.killpg(pgid, signal.SIGKILL)
+        if self.paused:
+            self.paused = False
+            set_paused(self.job, False)
+        log(self.job, "■ Build stopped by user.")
+        return True, "Build stopping."
 
     async def run(self, command: str, args: list[str], *, cwd: Path | None = None) -> None:
         """Runs one command to completion, streaming its output into the
@@ -414,6 +649,11 @@ class _BuildContext:
         async def heartbeat() -> None:
             while True:
                 await asyncio.sleep(HEARTBEAT_INTERVAL_S)
+                if self.paused:
+                    # Already logged once by pause() — no need to repeat
+                    # "no new output" every 20s for a silence the user
+                    # themselves asked for.
+                    continue
                 idle_s = time.monotonic() - last_activity_at
                 if idle_s >= HEARTBEAT_INTERVAL_S:
                     log(
@@ -433,6 +673,8 @@ class _BuildContext:
         return_code = await process.wait()
         self.current_process = None
 
+        if self.cancelled:
+            raise BuildCancelled("Build stopped by user.")
         if self.timed_out:
             raise RuntimeError(f"Build timed out after {round(settings.BUILD_TIMEOUT_MS / 1000)}s.")
         if return_code != 0:
@@ -445,14 +687,20 @@ class _BuildContext:
             # *something* on its way out. Surfacing that distinction here
             # means the job log always explains *why* it's uninformative
             # instead of just... being uninformative.
+            normalized_code = _normalize_exit_code(return_code)
             if lines_captured == 0:
                 log(
                     job,
-                    f"(no output was produced by '{command}' before it exited with code {return_code} — "
+                    f"(no output was produced by '{command}' before it exited with code {normalized_code} — "
                     "this usually points to a missing/corrupt executable or dependency, e.g. for a Gradle "
                     "wrapper, a missing gradle/wrapper/gradle-wrapper.jar, rather than a normal build error)",
                 )
-            raise RuntimeError(f"{command} {' '.join(args)} exited with code {return_code}.")
+            exit_hint = _describe_exit_code(normalized_code)
+            log(job, f"(exit code {normalized_code}: {exit_hint})")
+            raise CommandFailed(
+                f"{command} {' '.join(args)} exited with code {normalized_code} ({exit_hint}).",
+                exit_code=normalized_code,
+            )
 
     def run_gradle(self, gradlew_path: Path, android_dir: Path) -> Awaitable[None]:
         """Runs the project's own Gradle wrapper with flags that speed up a
@@ -501,6 +749,7 @@ class _BuildContext:
 
 async def _run_build(job: Job) -> None:
     ctx = _BuildContext(job)
+    _contexts[job.id] = ctx
     ctx.start_watchdog()
 
     try:
@@ -517,11 +766,18 @@ async def _run_build(job: Job) -> None:
         set_step(job, "Build complete", 100)
         log(job, "Build succeeded.")
         set_status(job, "success")
+    except BuildCancelled as exc:
+        log(job, f"Build stopped: {exc}")
+        set_status(job, "stopped", str(exc))
+    except CommandFailed as exc:
+        log(job, f"ERROR: {exc}")
+        set_status(job, "failed", str(exc), exit_code=exc.exit_code)
     except Exception as exc:  # noqa: BLE001 — a build failure must never crash the server
         log(job, f"ERROR: {exc}")
         set_status(job, "failed", str(exc))
     finally:
         ctx.cancel_watchdog()
+        _contexts.pop(job.id, None)
 
 
 async def _run_capacitor_build(job: Job, ctx: _BuildContext) -> None:
