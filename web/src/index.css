@@ -2318,3 +2318,99 @@ button {
 .quickfix-save-btn:hover:not(:disabled) { border-color: var(--teal); }
 .quickfix-save-btn:disabled { opacity: 0.4; cursor: default; }
 .quickfix-saved-note { font-size: 11px; color: var(--teal); }
+
+/* ---------------------------------------------------------------------- */
+/* Polish pass II: extends the button-lift/glow language from the first   */
+/* polish pass above (which only reached the modal/auth/assist buttons)   */
+/* to the dashboard's own action surfaces — the download payoff, the      */
+/* ticket cards themselves, per-build controls, the dropzone, and the     */
+/* small icon/toggle buttons scattered through the file explorer and log  */
+/* views — so the whole floor feels equally considered, not just the      */
+/* chrome around it. Same easing/timing as the first pass on purpose.     */
+/* ---------------------------------------------------------------------- */
+
+/* Download button: this is the payoff moment (a finished, installable
+   APK) and previously had only a flat opacity fade — the weakest feedback
+   of any primary action in the app. Now lifts and glows in its own teal,
+   the same treatment --copper-colored primary actions already got. */
+.download-btn {
+  transition: transform 0.12s ease, box-shadow 0.12s ease, opacity 0.12s ease;
+}
+.download-btn:hover {
+  opacity: 1;
+  transform: translateY(-1px);
+  box-shadow: 0 6px 16px color-mix(in srgb, var(--teal) 35%, transparent);
+}
+.download-btn:active { transform: translateY(0); box-shadow: none; }
+
+/* Per-build controls (pause/resume/stop/rebuild): each already carries a
+   status color via its border/text — the hover lift now uses that same
+   color for its glow instead of a single generic shadow, so amber/coral/
+   teal all get their own quiet spotlight instead of looking identical. */
+.control-btn:hover:not(:disabled) { transform: translateY(-1px); }
+.control-btn:active:not(:disabled) { transform: translateY(0); }
+.control-btn-resume:hover:not(:disabled) { box-shadow: 0 4px 12px color-mix(in srgb, var(--amber) 30%, transparent); }
+.control-btn-stop:hover:not(:disabled) { box-shadow: 0 4px 12px color-mix(in srgb, var(--coral) 30%, transparent); }
+.control-btn-rebuild:hover:not(:disabled) { box-shadow: 0 4px 12px color-mix(in srgb, var(--teal) 30%, transparent); }
+.control-btn:not(.control-btn-resume):not(.control-btn-stop):not(.control-btn-rebuild):hover:not(:disabled) {
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.25);
+}
+
+/* Ticket cards: previously only had a mount-in animation and no response
+   at all to being looked at/scanned. A restrained border+shadow brighten
+   (no transform — the card contains its own buttons, so a whole-card
+   lift under a hovered child would read as jumpy rather than premium)
+   gives the list some depth as the eye moves down it. */
+.ticket {
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+.ticket:hover {
+  border-color: var(--dim);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18);
+}
+.ticket-dismiss:hover { transform: translateY(-1px); }
+.ticket-dismiss:active { transform: translateY(0); }
+
+/* Dropzone: border/background hover already existed; adding the same
+   lift+glow language ties it to every other primary surface instead of
+   being the one interactive element that only recolors. */
+.dropzone:hover, .dropzone.drag {
+  transform: translateY(-1px);
+  box-shadow: 0 8px 22px color-mix(in srgb, var(--copper) 16%, transparent);
+}
+.dropzone { transition: border-color 0.15s ease, background 0.15s ease, transform 0.12s ease, box-shadow 0.15s ease; }
+.dropzone-glyph { transition: color 0.15s ease, border-color 0.15s ease; }
+.dropzone:hover .dropzone-glyph { border-color: var(--copper-dim); }
+
+/* Small icon/toggle buttons (log panel caret, file-tree caret, save
+   actions in the project/quick-fix editors): previously text-color-only
+   on hover, with no sense of a hit target. A soft background chip on
+   hover makes the click area legible without adding any new visual
+   weight when idle. */
+.log-toggle:hover,
+.filetree-toggle:hover,
+.docs-list-item:hover {
+  background: var(--surface);
+  border-radius: var(--radius-sm);
+}
+.pfe-save-btn:hover:not(:disabled),
+.quickfix-save-btn:hover:not(:disabled) {
+  transform: translateY(-1px);
+  box-shadow: 0 4px 10px color-mix(in srgb, var(--teal) 25%, transparent);
+}
+.pfe-save-btn:active:not(:disabled),
+.quickfix-save-btn:active:not(:disabled) { transform: translateY(0); box-shadow: none; }
+
+/* Empty state: the glyph was the one static circle on the page — every
+   other status glyph elsewhere (building, error-assistant dot) uses a
+   soft pulse to read as "alive". A slow, quiet breathing glow (not a
+   pulse — this state isn't signaling anything urgent, just waiting)
+   keeps it from feeling like a dead end while a build floor is empty. */
+.empty-floor-glyph { animation: empty-glyph-breathe 3.6s ease-in-out infinite; }
+@keyframes empty-glyph-breathe {
+  0%, 100% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--copper) 0%, transparent); }
+  50% { box-shadow: 0 0 0 5px color-mix(in srgb, var(--copper) 8%, transparent); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .empty-floor-glyph { animation: none; }
+}

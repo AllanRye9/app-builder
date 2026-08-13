@@ -7,6 +7,7 @@ that frontend can be pointed at this server unmodified.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import time
 from pathlib import Path
@@ -268,7 +269,13 @@ async def get_status(job_id: str, user: auth.User = Depends(auth.require_auth)) 
         "status": job.status,
         "queuePosition": job.queue_position,
         "error": job.error,
-        "logs": job.logs,
+        # job.logs is a bounded deque (see config.JOB_LOG_BUFFER_LINES) —
+        # cast to a list for JSON serialization. logsTruncated/logLineCount
+        # tell the frontend whether this is the whole log or a tail, and
+        # /api/logs/{id}/full always has the complete on-disk record.
+        "logs": list(job.logs),
+        "logsTruncated": job.logs_truncated,
+        "logLineCount": job.log_line_count,
         "notices": job.notices,
         "downloadReady": job.status == "success" and job.apk_path is not None,
         "projectType": job.project_type,
@@ -334,7 +341,15 @@ async def rebuild_job(job_id: str, user: auth.User = Depends(auth.require_auth))
     job.step = None
     job.step_progress = 0
     job.apk_path = None
-    job.logs = []
+    job.logs.clear()
+    job.logs_truncated = False
+    job.log_line_count = 0
+    # Start the on-disk log fresh too, rather than appending this rebuild
+    # after a stale previous attempt's log — job.log_file's *path* doesn't
+    # change, only its contents.
+    if job.log_file is not None:
+        with contextlib.suppress(OSError):
+            job.log_file.unlink()
     job.notices = []
     set_status(job, "queued")
     log(job, "Rebuild requested — re-running the build with the current project files.")
@@ -455,7 +470,23 @@ async def stream_logs(job_id: str, request: Request, user: auth.User = Depends(a
         raise HTTPException(status_code=404)
 
     async def event_generator():
-        # Replay what's already happened, then stream new lines.
+        # Replay what's already happened, then stream new lines. job.logs
+        # is only the most recent JOB_LOG_BUFFER_LINES (see config.py) —
+        # tell a freshly (re)connecting client up front if that's a
+        # truncated tail rather than the whole build, so it knows
+        # GET /api/logs/{id}/full exists for the complete record.
+        if job.logs_truncated:
+            yield _sse(
+                "notice",
+                {
+                    "level": "info",
+                    "title": "Log truncated",
+                    "message": (
+                        f"Showing the most recent {len(job.logs)} of {job.log_line_count} log lines. "
+                        "Download the full log for the complete build output."
+                    ),
+                },
+            )
         for line in job.logs:
             yield _sse(None, line)
         for entry in job.notices:
@@ -501,6 +532,27 @@ async def stream_logs(job_id: str, request: Request, user: auth.User = Depends(a
         event_generator(),
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "Connection": "keep-alive", "X-Accel-Buffering": "no"},
+    )
+
+
+@router.get("/logs/{job_id}/full")
+async def download_full_log(job_id: str, user: auth.User = Depends(auth.require_auth)):
+    """Complement to the bounded in-memory `job.logs` (config.
+    JOB_LOG_BUFFER_LINES): every line ever logged for this job is written
+    to job.log_file on disk as it happens (see job_store.log()), so
+    nothing is actually lost by bounding the in-memory copy — this just
+    gives a way to retrieve the full record when it has been truncated in
+    the live view or the status/SSE response.
+    """
+    job = jobs.get(job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="Unknown job id.")
+    if job.log_file is None or not job.log_file.exists():
+        raise HTTPException(status_code=404, detail="No log file available for this job.")
+    return FileResponse(
+        path=job.log_file,
+        media_type="text/plain",
+        filename=f"apkit-{job.id}.log",
     )
 
 

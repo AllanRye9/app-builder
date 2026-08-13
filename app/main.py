@@ -22,7 +22,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.middleware.cors import CORSMiddleware
 
 from .config import settings
-from .job_store import ttl_sweep_loop
+from .job_store import memory_pressure_sweep_loop, ttl_sweep_loop
 from .routes import rate_limit_sweep_loop, router
 from .auth_routes import router as auth_router
 
@@ -40,6 +40,7 @@ _background_tasks: list[asyncio.Task] = []
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
     _background_tasks.append(asyncio.create_task(ttl_sweep_loop()))
+    _background_tasks.append(asyncio.create_task(memory_pressure_sweep_loop()))
     _background_tasks.append(asyncio.create_task(rate_limit_sweep_loop()))
     logger.info("APK builder listening on http://0.0.0.0:%d", settings.PORT)
     logger.info("Max concurrent builds: %d", settings.MAX_CONCURRENT_BUILDS)

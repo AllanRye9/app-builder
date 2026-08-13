@@ -48,6 +48,43 @@ class Settings:
     )
     JOB_TTL_MS: int = field(default_factory=lambda: _env_int("JOB_TTL_MS", 60 * 60 * 1000))
 
+    # Caps how many log lines a single job keeps *in memory* — a verbose
+    # Gradle/npm build can easily emit thousands of lines, and every job
+    # otherwise stayed fully resident (job_store.Job.logs) until the TTL
+    # sweep, regardless of how long it had already finished. The full,
+    # untruncated log is still written line-by-line to disk (job.log_file
+    # — see job_store.py) so nothing is actually lost; this only bounds
+    # what's held in RAM and replayed to a freshly (re)connecting SSE
+    # client. Raise this if the dashboard's log view is expected to show
+    # very long builds in full without a "download full log" round trip.
+    JOB_LOG_BUFFER_LINES: int = field(default_factory=lambda: _env_int("JOB_LOG_BUFFER_LINES", 2000))
+
+    # Per-subscriber cap on job_store.EventBus's fan-out queues. Without
+    # this, a browser tab that stops reading its SSE stream (backgrounded,
+    # a dead connection the server hasn't noticed yet) lets that
+    # subscriber's asyncio.Queue grow without bound for the entire life of
+    # a chatty build. When full, the oldest buffered event is dropped in
+    # favor of the newest — a stalled viewer losing some middle-of-build
+    # events is fine; unbounded memory growth per idle tab is not.
+    SSE_QUEUE_MAXSIZE: int = field(default_factory=lambda: _env_int("SSE_QUEUE_MAXSIZE", 1000))
+
+    # How often job_store.memory_pressure_sweep_loop() checks real free
+    # memory and, independently of the slower JOB_TTL_MS/ttl_sweep_loop
+    # above, purges finished (success/failed/stopped) jobs early if this
+    # container is genuinely low on RAM.
+    MEMORY_PRESSURE_CHECK_INTERVAL_S: int = field(
+        default_factory=lambda: _env_int("MEMORY_PRESSURE_CHECK_INTERVAL_S", 30)
+    )
+    # Grace period a *finished* job is guaranteed to survive even under
+    # memory pressure, before memory_pressure_sweep_loop() is allowed to
+    # purge it early — short enough to actually relieve a real squeeze
+    # (unlike waiting out the full JOB_TTL_MS), long enough that a person
+    # who just watched their build finish doesn't lose it before they've
+    # had a chance to download the APK or read the log.
+    MEMORY_PRESSURE_JOB_TTL_MS: int = field(
+        default_factory=lambda: _env_int("MEMORY_PRESSURE_JOB_TTL_MS", 5 * 60 * 1000)
+    )
+
     # Frontend and API are served from this same service by default, so
     # cross-origin requests aren't the normal case here — kept available in
     # case the frontend is ever split out separately.

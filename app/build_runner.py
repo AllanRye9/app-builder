@@ -137,18 +137,39 @@ settings.PUB_CACHE_DIR.mkdir(parents=True, exist_ok=True)
 
 # Per-build Gradle JVM heap cap, sized against this container's *actual*
 # total RAM rather than a fixed guess — see config.py's MIN_FREE_MEMORY_MB
-# note. Reserve headroom for the server itself and the OS (RESERVED_MB),
-# split the rest evenly across the concurrency budget, and clamp to a sane
-# range.
-_RESERVED_MB = 512
+# note. Reserve headroom for the server itself and the OS, split the rest
+# evenly across the concurrency budget, and clamp to a sane range.
+#
+# The reservation itself scales with total RAM instead of a flat constant:
+# a fixed 512MB reservation is proportionally huge on a small 1-2GB
+# instance (eating most of the per-slot budget before any build even
+# starts) and needlessly conservative on a large one (leaving RAM on the
+# table that could have gone to a bigger heap). _RESERVED_PERCENT_MB below
+# is a floor/ceiling-clamped percentage of total RAM instead.
+_RESERVED_PERCENT = 0.20
+_MIN_RESERVED_MB = 384
+_MAX_RESERVED_MB = 1024
 _MIN_BUILD_HEAP_MB = 768
 _MAX_BUILD_HEAP_MB = 2048
 _TOTAL_MB = psutil.virtual_memory().total / 1024 / 1024
+_RESERVED_MB = max(_MIN_RESERVED_MB, min(_MAX_RESERVED_MB, int(_TOTAL_MB * _RESERVED_PERCENT)))
 _PER_SLOT_MB = (_TOTAL_MB - _RESERVED_MB) / max(settings.MAX_CONCURRENT_BUILDS, 1)
 GRADLE_HEAP_MB = max(
     _MIN_BUILD_HEAP_MB,
     min(_MAX_BUILD_HEAP_MB, int(_PER_SLOT_MB)),
 )
+
+# Cap for the Node process running a Capacitor-web job's `npm ci`/`npm run
+# build`/`npx cap ...` steps — previously the *only* build path with no
+# heap ceiling at all (Gradle gets GRADLE_HEAP_MB, Flutter's Dart VM gets
+# FLUTTER_DART_HEAP_MB below), even though a bundler compiling a large web
+# project with source maps can spike memory just as hard as a JVM. Reuses
+# the same per-slot budget GRADLE_HEAP_MB draws from — safe to size
+# identically rather than needing its own split, since a Capacitor job's
+# npm steps and its `gradlew` invocation run sequentially within the same
+# job, never concurrently, so they're never actually claiming their heap
+# caps against this slot's budget at the same instant.
+NODE_HEAP_MB = GRADLE_HEAP_MB
 
 # A Flutter build is NOT one JVM per slot the way native-android/Capacitor
 # builds are — `flutter build apk` runs its own Dart VM (frontend_server /
@@ -581,6 +602,15 @@ class _BuildContext:
             # actual `build apk` compile.
             dart_vm_args = f"--old_gen_heap_size={FLUTTER_DART_HEAP_MB}"
             child_env["DART_VM_OPTIONS"] = " ".join(filter(None, [child_env.get("DART_VM_OPTIONS"), dart_vm_args]))
+
+        # Caps the V8 heap for `npm`/`npx` themselves and whatever bundler
+        # they invoke (vite/webpack/react-scripts/...) — see NODE_HEAP_MB
+        # above. Previously the one build path (Capacitor-web) with no
+        # heap ceiling at all, unlike Gradle/Dart. Set unconditionally, the
+        # same way GRADLE_OPTS is: harmless for commands that never read
+        # NODE_OPTIONS (gradlew, flutter's own launcher scripts, etc).
+        node_opts_args = f"--max-old-space-size={NODE_HEAP_MB}"
+        child_env["NODE_OPTIONS"] = " ".join(filter(None, [child_env.get("NODE_OPTIONS"), node_opts_args]))
 
         # Belt-and-suspenders against a build that "never completes": with no
         # stdin argument, asyncio inherits this *server's* stdin, which in a
