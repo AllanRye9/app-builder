@@ -434,13 +434,47 @@ body {
   .sidebar {
     width: 100% !important;
     height: auto;
-    max-height: 280px;
+    max-height: none;
     border-right: none;
     border-bottom: 1px solid var(--line);
     order: 1;
   }
+  /* Collapsing only makes sense when the sidebar has room to shrink beside
+     the content — on a narrow viewport it's already full-width, so the
+     toggle (and any icon-only collapsed state) just wastes a tap. */
+  .sidebar-collapse-btn { display: none; }
+  /* Nav becomes a horizontal, wrapping row of pill buttons instead of four
+     stacked full-width rows — keeps the top of the page compact so the
+     dropzone and build list aren't pushed far down on a phone. */
+  .sidebar-nav {
+    flex-direction: row;
+    flex-wrap: wrap;
+    padding: 8px;
+  }
+  .sidebar-nav-item {
+    flex: 1 1 auto;
+    justify-content: center;
+    min-width: 76px;
+  }
+  .sidebar-section-body { max-height: 45vh; }
   .side-panel-right { width: 100%; height: auto; max-height: 320px; border-left: none; border-bottom: 1px solid var(--line); order: 3; }
   .center-scroll { height: auto; overflow-y: visible; order: 2; }
+}
+
+@media (max-width: 480px) {
+  .app-shell { padding: 18px 12px 32px; }
+  .floor-header h1 { font-size: 21px; }
+  .eyebrow { font-size: 10px; gap: 5px; }
+  .ticket-stub { width: 40px; }
+  .stat { padding: 4px 8px; font-size: 11.5px; }
+  .stat-value { font-size: 13px; }
+  .dropzone { padding: 12px; gap: 10px; }
+  .dropzone-glyph { width: 28px; height: 28px; }
+  .sidebar-nav-item { min-width: 64px; font-size: 11.5px; padding: 8px 6px; }
+  .sidebar-nav-item span { overflow: visible; }
+  .modal-head { padding: 13px 14px; }
+  .modal-scroll { padding: 13px 14px; }
+  .modal-actions { padding: 12px 14px; }
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -791,6 +825,8 @@ button { font-family: inherit; }
   gap: 10px;
 }
 .pipeline-detail-label {
+  flex: 1 1 auto;
+  min-width: 0;
   font-family: var(--mono);
   font-size: 11.5px;
   color: var(--dim);
@@ -1749,6 +1785,20 @@ button { font-family: inherit; }
 @media (max-width: 640px) {
   .modal-panel { max-width: 100%; }
   .auth-card { padding: 22px 20px; }
+  /* Two right-aligned buttons can crowd or clip on a narrow phone —
+     letting them wrap and stretch to equal width keeps both fully
+     tappable instead of squeezing side by side. */
+  .modal-actions { flex-wrap: wrap; }
+  .modal-actions .modal-btn-secondary,
+  .modal-actions .modal-btn-primary {
+    flex: 1 1 120px;
+    text-align: center;
+  }
+}
+
+@media (max-width: 380px) {
+  .auth-card { padding: 18px 16px; }
+  .permissions-grid { grid-template-columns: 1fr; }
 }
 
 /* ---------------------------------------------------------------------- */

@@ -97,6 +97,22 @@ function Dashboard({ user, onLogout }) {
     applyTheme(theme);
   }, [theme]);
 
+  // Below the mobile breakpoint the sidebar is forced full-width and its
+  // collapse toggle is hidden (see index.css), but a `collapsed` state
+  // carried over from a wider viewport would still hide the nav labels via
+  // this component's own conditional rendering. Force it back open whenever
+  // the viewport is mobile-sized so labels are never stuck hidden with no
+  // way to bring them back.
+  useEffect(() => {
+    const mq = window.matchMedia('(max-width: 1000px)');
+    function syncToViewport(e) {
+      if (e.matches) setCollapsed(false);
+    }
+    syncToViewport(mq);
+    mq.addEventListener('change', syncToViewport);
+    return () => mq.removeEventListener('change', syncToViewport);
+  }, []);
+
   function toggleCollapsed() {
     setCollapsed((c) => {
       const next = !c;
