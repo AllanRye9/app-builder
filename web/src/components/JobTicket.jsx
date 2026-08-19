@@ -5,6 +5,7 @@ import DownloadCard from './DownloadCard.jsx';
 import ErrorBanner from './ErrorBanner.jsx';
 import FileTree from './FileTree.jsx';
 import ProjectExplorer from './ProjectExplorer.jsx';
+import ProjectEditorModal from './ProjectEditorModal.jsx';
 import { streamLogs, pauseBuild, resumeBuild, cancelBuild, rebuildJob } from '../api.js';
 
 // How often batched log lines are flushed into rendered state, in ms. A
@@ -39,6 +40,8 @@ function JobTicket({ job, onUpdate, onDone, onNotice, onRemove }) {
   // server) opens a brand new log stream instead of reusing the closed one
   // from the previous attempt.
   const [buildKey, setBuildKey] = useState(0);
+  // Which full-page editor is open for this ticket, if any: null | 'edit' | 'ai'.
+  const [editorMode, setEditorMode] = useState(null);
   const doneFired = useRef(false);
   // Authoritative full history, updated synchronously on every line — used
   // for the log tail handed to onDone, independent of how the *rendered*
@@ -121,7 +124,7 @@ function JobTicket({ job, onUpdate, onDone, onNotice, onRemove }) {
         if (status === 'success') setStage('success');
         if (!doneFired.current) {
           doneFired.current = true;
-          onDone(job.tempId, job.id, job.fileName, status, error, logsRef.current, code ?? null);
+          onDone(job.tempId, job.id, job.fileName, status, error, logsRef.current, code ?? null, job.projectType);
         }
       },
     });
@@ -171,6 +174,23 @@ function JobTicket({ job, onUpdate, onDone, onNotice, onRemove }) {
     setBuildKey((k) => k + 1);
     return result;
   }, 'rebuild');
+
+  // Built locally from this ticket's own state rather than threaded down
+  // from App.jsx's global errorContext — a ticket already has everything
+  // (id, error, exit code, log tail) needed to drive both the file-path
+  // guessing and the AI chat for *its own* failure, so the full-page
+  // editor works the same whether this is the ticket App.jsx currently has
+  // its global side panel pointed at or not.
+  const localErrorContext = job.status === 'failed' || job.status === 'stopped'
+    ? {
+        jobId: job.id,
+        fileName: job.fileName,
+        projectType: job.projectType,
+        errorMessage: job.error,
+        logTail: logsRef.current.slice(-60),
+        exitCode,
+      }
+    : null;
 
   return (
     <article className={`ticket ticket-${job.status}${paused ? ' ticket-paused' : ''}`}>
@@ -222,8 +242,18 @@ function JobTicket({ job, onUpdate, onDone, onNotice, onRemove }) {
               </button>
             )}
             {(job.status === 'failed' || job.status === 'stopped') && (
+              <button type="button" className="control-btn control-btn-edit" onClick={() => setEditorMode('edit')} disabled={controlBusy}>
+                ✎ Edit
+              </button>
+            )}
+            {(job.status === 'failed' || job.status === 'stopped') && (
               <button type="button" className="control-btn control-btn-rebuild" onClick={handleRebuild} disabled={controlBusy}>
-                ↻ Rebuild
+                ↻ Retry
+              </button>
+            )}
+            {(job.status === 'failed' || job.status === 'stopped') && (
+              <button type="button" className="control-btn control-btn-ai" onClick={() => setEditorMode('ai')} disabled={controlBusy}>
+                ✦ AI
               </button>
             )}
             {controlMessage && <span className="control-message">{controlMessage}</span>}
@@ -262,6 +292,16 @@ function JobTicket({ job, onUpdate, onDone, onNotice, onRemove }) {
           </div>
         )}
       </div>
+
+      {editorMode && (
+        <ProjectEditorModal
+          job={job}
+          mode={editorMode}
+          errorContext={localErrorContext}
+          readOnly={isRunning && !paused}
+          onClose={() => setEditorMode(null)}
+        />
+      )}
     </article>
   );
 }

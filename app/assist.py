@@ -31,18 +31,28 @@ _ANTHROPIC_TIMEOUT_S = 20.0
 
 _SYSTEM_PROMPT = (
     "You are the troubleshooting assistant embedded in apkit, a tool that turns "
-    "uploaded React/Capacitor or native Kotlin/Java project archives into signed "
-    "Android APKs inside disposable build containers. You're shown next to a build "
-    "that failed. Answer the person's question about it directly and concretely — "
-    "name the likely cause and the specific fix (a command to run, a file to check, "
-    "a line to add), in 2-4 short paragraphs or a short list. Don't pad with "
-    "reassurance or ask clarifying questions unless the error message genuinely "
-    "could mean more than one thing. You don't have shell access and can't see "
-    "anything beyond what's included in this message. The person can open a "
-    "quick-fix editor for any file in their uploaded project right from this "
-    "panel — if the fix is a small, targeted change to one specific file (a "
-    "config value, a manifest entry, a missing dependency line), name that "
-    "exact file path so they know what to open."
+    "uploaded React/Capacitor, native Kotlin/Java, or Flutter (Dart) project "
+    "archives into unsigned, installable debug Android APKs inside disposable "
+    "build containers. Flutter projects are built with `flutter pub get` followed "
+    "by `flutter build apk --debug`, driving the project's own embedded android/ "
+    "Gradle project — if the uploaded project didn't include an android/ folder "
+    "(or it was missing gradlew/gradle-wrapper.jar, which is normal for a project "
+    "exported from git since Flutter's default .gitignore excludes them), apkit "
+    "runs `flutter create --platforms=android .` first to generate it before "
+    "building. You're shown next to a build that failed. Answer the person's "
+    "question about it directly and concretely — name the likely cause and the "
+    "specific fix (a command to run, a file to check, a line to add), in 2-4 "
+    "short paragraphs or a short list. For a Flutter project, ground the fix in "
+    "the Flutter/Dart toolchain (pubspec.yaml, flutter pub get, flutter build "
+    "apk) rather than assuming a native-Android or npm/Capacitor cause unless the "
+    "error text actually points there. Don't pad with reassurance or ask "
+    "clarifying questions unless the error message genuinely could mean more "
+    "than one thing. You don't have shell access and can't see anything beyond "
+    "what's included in this message. The person can open a quick-fix editor "
+    "for any file in their uploaded project right from this panel — if the fix "
+    "is a small, targeted change to one specific file (a config value, a "
+    "manifest entry, a missing dependency line, a pubspec.yaml entry), name "
+    "that exact file path so they know what to open."
 )
 
 
@@ -169,18 +179,53 @@ _PATTERNS: list[tuple[tuple[str, ...], str]] = [
         "a small host, concurrent builds can exhaust it. Try lowering MAX_CONCURRENT_BUILDS, or give "
         "the container more RAM, before re-running the build.",
     ),
+    # --- Flutter/Dart-specific patterns (checked before the generic native-
+    # Android Gradle-wrapper pattern below, since a Flutter build's own
+    # embedded Gradle step can surface wrapper-shaped error text too, but
+    # the fix there is never "run `gradle wrapper` by hand" — apkit
+    # regenerates that wrapper itself via `flutter create`).
     (
-        ("gradle-wrapper.jar", "gradlew: not found", "gradlew: permission denied", "could not find or load main class"),
-        "The Gradle wrapper looks incomplete or non-executable. A native Android project needs all "
-        "four wrapper files present: gradlew, gradlew.bat, gradle/wrapper/gradle-wrapper.jar, and "
-        "gradle/wrapper/gradle-wrapper.properties. If you generated the project by hand rather than "
-        "with Android Studio, run `gradle wrapper` in the project root and re-zip.",
+        ("no pubspec.yaml", "pubspec.yaml not found", "could not find a file named pubspec"),
+        "No pubspec.yaml was found for this Flutter project. Make sure pubspec.yaml sits at the "
+        "project root of the archive (or a single wrapper folder above it) — apkit locates the "
+        "project root by searching for it, but it does need to exist somewhere in the zip.",
+    ),
+    (
+        ("version solving failed", "pub get failed", "pub failed", "could not resolve the package"),
+        "This is a Flutter/Dart dependency resolution error from `flutter pub get`. Check "
+        "pubspec.yaml for a version constraint that can't be satisfied (a package pinned to an "
+        "SDK-incompatible version is the usual cause) — running `flutter pub get` locally will "
+        "reproduce the same error with more detail before you re-zip.",
+    ),
+    (
+        ("target file", "lib/main.dart", "target application not found"),
+        "Flutter can't find the app's entry point. Confirm lib/main.dart exists at that exact path "
+        "and pubspec.yaml's `name:` field matches what the code imports elsewhere in lib/.",
+    ),
+    (
+        ("no android/ folder", "flutter create ran but no working android/", "gradlew + gradle-wrapper.jar"),
+        "apkit tried to generate the missing android/ platform folder with `flutter create` but the "
+        "result still wasn't buildable. This usually points to a Flutter SDK/toolchain issue in the "
+        "container rather than the uploaded project's own code — check the log lines right above "
+        "this for what `flutter create` itself reported.",
+    ),
+    (
+        ("gradlew: not found", "gradlew: permission denied", "could not find or load main class"),
+        "The Gradle wrapper looks incomplete or non-executable. For a native Android project this "
+        "means all four wrapper files need to be present: gradlew, gradlew.bat, "
+        "gradle/wrapper/gradle-wrapper.jar, and gradle/wrapper/gradle-wrapper.properties — if you "
+        "generated the project by hand rather than with Android Studio, run `gradle wrapper` in the "
+        "project root and re-zip. For a Flutter project, don't do this by hand: apkit auto-generates "
+        "android/'s wrapper via `flutter create` when it's missing (normal for a project exported "
+        "from git, since Flutter's own .gitignore excludes those files) — if it's still failing after "
+        "that step, the issue is more likely in flutter build apk's own output further up the log.",
     ),
     (
         ("settings.gradle", "could not determine the dependencies", "project 'app' not found"),
         "Gradle can't locate the app module. Check that settings.gradle (or settings.gradle.kts) at "
         "the project root includes `include ':app'`, and that an app/build.gradle actually exists at "
-        "that path in the archive.",
+        "that path in the archive. (For a Flutter project, this file lives under android/ and is "
+        "normally managed by Flutter itself — don't hand-edit it unless you know why it's wrong.)",
     ),
     (
         ("npm err", "enoent", "cannot find module", "peer dep"),
@@ -197,21 +242,26 @@ _PATTERNS: list[tuple[tuple[str, ...], str]] = [
     ),
     (
         ("network", "timed out", "timeout", "could not resolve host", "connection refused"),
-        "This looks like a network issue reaching a dependency host (Maven Central, npm registry, or "
-        "the Gradle distribution servers) from inside the build container, not a problem with the "
-        "project itself. It's often transient — retrying the same archive is worth trying first.",
+        "This looks like a network issue reaching a dependency host (Maven Central, the pub.dev "
+        "registry, npm registry, or the Gradle distribution servers) from inside the build container, "
+        "not a problem with the project itself. It's often transient — retrying the same archive is "
+        "worth trying first.",
     ),
     (
         ("android/", "ios/", "platforms/"),
-        "Archives with a top-level android/, ios/, or platforms/ folder are rejected outright — those "
-        "are generated by the build itself and can't be safely merged with an existing one. Remove "
-        "that folder from the zip and try again; it'll be regenerated fresh during the build.",
+        "Archives with a top-level android/, ios/, or platforms/ folder are rejected outright for "
+        "web/Capacitor and native-Android uploads, since those are generated by the build itself and "
+        "can't be safely merged with an existing one. A Flutter project is the one exception — its "
+        "own android/ and ios/ folders are real, hand-maintained source and are allowed as soon as a "
+        "pubspec.yaml is present anywhere in the archive. If this isn't a Flutter project, remove that "
+        "folder from the zip and try again; it'll be regenerated fresh during the build.",
     ),
     (
         ("permission", "manifest.permission", "androidmanifest"),
         "If this is about a missing runtime permission rather than a build failure, check the "
         "Android permissions panel before uploading — nothing is added to the manifest automatically, "
-        "only what you explicitly check there.",
+        "only what you explicitly check there. This applies the same way to a Flutter project's "
+        "android/app/src/main/AndroidManifest.xml.",
     ),
 ]
 
@@ -221,7 +271,9 @@ _GENERIC_FALLBACK = (
     "next steps: check the full build log (below the error banner) for the first error line, not just "
     "the last one — the real cause is often several lines above where the build finally gave up. If "
     "this is a native Android project, confirming it builds locally with the same Gradle wrapper "
-    "before re-uploading rules out most environment-specific issues."
+    "before re-uploading rules out most environment-specific issues. If this is a Flutter project, "
+    "running `flutter pub get` and `flutter build apk --debug` locally against the same code is the "
+    "equivalent check."
 )
 
 
