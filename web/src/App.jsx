@@ -211,7 +211,7 @@ function Dashboard({ user, onLogout }) {
     pushToast({ level: 'warning', title: 'Not accepted', message });
   }
 
-  const handleJobDone = useCallback((tempId, jobId, fileName, status, error, logTail, exitCode) => {
+  const handleJobDone = useCallback((tempId, jobId, fileName, status, error, logTail, exitCode, projectType) => {
     if (status === 'success') {
       pushToast({ level: 'success', title: 'Build complete', message: `${fileName} is ready to download.` });
       notifyBrowser('Build complete', `${fileName} is ready to download.`);
@@ -221,7 +221,14 @@ function Dashboard({ user, onLogout }) {
       const message = error || `${fileName} failed to build.`;
       pushToast({ level: 'error', title: 'Build failed', message });
       notifyBrowser('Build failed', message);
-      setErrorContext({ jobId, fileName, errorMessage: message, logTail: logTail || [], exitCode: exitCode ?? null });
+      setErrorContext({
+        jobId,
+        fileName,
+        projectType: projectType ?? null,
+        errorMessage: message,
+        logTail: logTail || [],
+        exitCode: exitCode ?? null,
+      });
     }
   }, [pushToast]);
 

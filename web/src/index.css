@@ -2464,3 +2464,174 @@ button {
 @media (prefers-reduced-motion: reduce) {
   .empty-floor-glyph { animation: none; }
 }
+
+/* ---------------------------------------------------------------------- */
+/* Edit / Retry / AI controls on a failed or stopped ticket                */
+/* ---------------------------------------------------------------------- */
+.control-btn-edit { border-color: var(--violet-dim); color: var(--violet); }
+.control-btn-edit:hover:not(:disabled) { border-color: var(--violet); }
+.control-btn-ai { border-color: var(--brand-dim); color: var(--brand); }
+.control-btn-ai:hover:not(:disabled) { border-color: var(--brand); }
+
+/* ---------------------------------------------------------------------- */
+/* Full-page project editor modal (Edit / AI buttons on a failed ticket)  */
+/* ---------------------------------------------------------------------- */
+.modal-panel-xl {
+  max-width: 1180px;
+  width: 94vw;
+  height: 86vh;
+  max-height: 86vh;
+}
+
+.project-editor-error-summary {
+  margin-top: 3px;
+  font-size: 12px;
+  color: var(--coral);
+  font-family: var(--mono);
+  max-width: 640px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.project-editor-body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+}
+.project-editor-body-split .project-editor-tree-col { border-right: 1px solid var(--line); }
+
+.project-editor-tree-col {
+  flex: 1 1 340px;
+  min-width: 260px;
+  max-width: 420px;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  padding: 10px;
+}
+.project-editor-body:not(.project-editor-body-split) .project-editor-tree-col {
+  max-width: none;
+  border-right: none;
+}
+
+.project-editor-hint {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11.5px;
+  color: var(--coral);
+  padding: 4px 4px 8px;
+}
+.project-editor-hint-dot {
+  width: 7px; height: 7px;
+  border-radius: 50%;
+  background: var(--coral);
+  flex-shrink: 0;
+}
+
+.project-editor-tree {
+  flex: 1;
+  min-height: 0;
+  padding: 2px 0;
+}
+
+.pfe-row-implicated .pfe-row-main { color: var(--coral); }
+.pfe-row-implicated .pfe-row-main:hover { color: var(--coral); opacity: 0.85; }
+.pfe-implicated-dot {
+  width: 6px; height: 6px;
+  border-radius: 50%;
+  background: var(--coral);
+  flex-shrink: 0;
+  margin-left: 2px;
+}
+
+.project-editor-chat-col {
+  flex: 1 1 380px;
+  min-width: 300px;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  padding: 10px 14px;
+}
+.project-editor-chat-col .assist-thread { flex: 1; }
+
+/* ---------------------------------------------------------------------- */
+/* File editor popup (opened from the project editor tree)                */
+/* ---------------------------------------------------------------------- */
+.file-editor-overlay { z-index: 320; }
+.file-editor-panel {
+  max-width: 780px;
+  width: 92vw;
+  height: 80vh;
+  max-height: 80vh;
+}
+.file-editor-head { gap: 10px; }
+.file-editor-path {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-family: var(--mono);
+  font-size: 12.5px;
+  color: var(--paper);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.file-editor-head-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+.autosave-status {
+  font-family: var(--mono);
+  font-size: 10.5px;
+  color: var(--faint);
+  white-space: nowrap;
+}
+.autosave-status-saved { color: var(--teal); }
+.autosave-status-saving { color: var(--copper); }
+.autosave-status-pending { color: var(--amber); }
+
+.file-editor-settings { position: relative; }
+.file-editor-settings-btn { font-size: 13px; }
+.file-editor-settings-menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  width: 210px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  box-shadow: 0 12px 30px rgba(0, 0, 0, 0.35);
+  padding: 8px;
+  z-index: 10;
+}
+.file-editor-settings-row {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 12px;
+  color: var(--dim);
+  padding: 5px 3px;
+}
+.file-editor-settings-row input[type="checkbox"] { accent-color: var(--brand); }
+.file-editor-settings-fontsize { justify-content: space-between; }
+.file-editor-settings-fontsize button {
+  width: 20px; height: 20px;
+  border-radius: 4px;
+  border: 1px solid var(--line);
+  background: none;
+  color: var(--dim);
+  cursor: pointer;
+  line-height: 1;
+}
+.file-editor-settings-fontsize button:hover { color: var(--paper); border-color: var(--dim); }
+
+.file-editor-body { flex: 1; min-height: 0; display: flex; }
+.file-editor-textarea { min-height: 100%; line-height: 1.6; }
+
+.file-editor-actions { align-items: center; }
