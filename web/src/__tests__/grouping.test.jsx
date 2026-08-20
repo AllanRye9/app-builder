@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, fireEvent, act, waitFor, within } from '@testing-library/react';
+import { render, screen, fireEvent, act, waitFor } from '@testing-library/react';
 
 // --- Mock the network-touching modules so the test drives real App.jsx /
 // Dashboard state transitions without any real HTTP/EventSource traffic. ---
@@ -60,8 +60,33 @@ async function dropFiles(names) {
   });
 }
 
+// Tickets are now flattened into one shared list (see App.jsx's ticketRows
+// comment for why — nesting them in a separate wrapper <div> per group used
+// to force a remount, and a duplicate build-completion side effect, every
+// time a job crossed from "running" into a terminal status). So "which
+// group is this ticket in" is no longer a DOM-ancestry question — it's
+// "which group-title row is the nearest one before it in document order".
+// This walks the same rendered order a person actually sees on screen.
+function jobNamesInGroup(headerText) {
+  const header = screen.getByText(headerText).closest('.ticket-group-title');
+  const names = [];
+  let node = header.nextElementSibling;
+  while (node && !node.classList.contains('ticket-group-title')) {
+    const nameEl = node.querySelector('.ticket-name');
+    if (nameEl) names.push(nameEl.textContent);
+    node = node.nextElementSibling;
+  }
+  return names;
+}
+
+function countBadge(headerText) {
+  const header = screen.getByText(headerText).closest('.ticket-group-title');
+  return header.querySelector('.ticket-group-count').textContent;
+}
+
 beforeEach(() => {
   for (const k of Object.keys(streamHandlers)) delete streamHandlers[k];
+  vi.clearAllMocks();
 });
 
 describe('build floor grouping', () => {
@@ -81,8 +106,10 @@ describe('build floor grouping', () => {
     });
 
     // Right after dropping, everything is still "running" (validating).
-    let runningGroup = screen.getByText('Running').closest('.ticket-group');
-    expect(within(runningGroup).getAllByText(/\.zip$/).length).toBe(4);
+    expect(jobNamesInGroup('Running')).toEqual(
+      expect.arrayContaining(['kotlin.zip', 'react.zip', 'flutter.zip', 'java.zip'])
+    );
+    expect(jobNamesInGroup('Running').length).toBe(4);
     expect(screen.queryByText('Successful')).toBeNull();
     expect(screen.queryByText('Failed')).toBeNull();
     expect(screen.queryByText('Stopped')).toBeNull();
@@ -112,24 +139,39 @@ describe('build floor grouping', () => {
       expect(screen.getByText('Stopped')).toBeTruthy();
     });
 
-    runningGroup = screen.getByText('Running').closest('.ticket-group');
-    const successGroup = screen.getByText('Successful').closest('.ticket-group');
-    const failedGroup = screen.getByText('Failed').closest('.ticket-group');
-    const stoppedGroup = screen.getByText('Stopped').closest('.ticket-group');
-
-    expect(within(runningGroup).getByText('java.zip')).toBeTruthy();
-    expect(within(runningGroup).queryByText('kotlin.zip')).toBeNull();
-    expect(within(runningGroup).queryByText('react.zip')).toBeNull();
-    expect(within(runningGroup).queryByText('flutter.zip')).toBeNull();
-
-    expect(within(successGroup).getByText('kotlin.zip')).toBeTruthy();
-    expect(within(failedGroup).getByText('react.zip')).toBeTruthy();
-    expect(within(stoppedGroup).getByText('flutter.zip')).toBeTruthy();
+    expect(jobNamesInGroup('Running')).toEqual(['java.zip']);
+    expect(jobNamesInGroup('Successful')).toEqual(['kotlin.zip']);
+    expect(jobNamesInGroup('Failed')).toEqual(['react.zip']);
+    expect(jobNamesInGroup('Stopped')).toEqual(['flutter.zip']);
 
     // Each group's count badge should match how many tickets are in it.
-    expect(within(runningGroup).getByText('1')).toBeTruthy();
-    expect(within(successGroup).getByText('1')).toBeTruthy();
-    expect(within(failedGroup).getByText('1')).toBeTruthy();
-    expect(within(stoppedGroup).getByText('1')).toBeTruthy();
+    expect(countBadge('Running')).toBe('1');
+    expect(countBadge('Successful')).toBe('1');
+    expect(countBadge('Failed')).toBe('1');
+    expect(countBadge('Stopped')).toBe('1');
+  });
+
+  it('keeps the same JobTicket mounted (does not reopen its log stream) when a job moves from running into a terminal group', async () => {
+    render(<App />);
+    await waitFor(() => expect(screen.getByLabelText('Add project archives')).toBeTruthy());
+
+    await dropFiles(['react.zip']);
+    await waitFor(() => expect(Object.keys(streamHandlers).length).toBe(1));
+
+    // streamLogs (mocked) is the thing a fresh JobTicket mount would call
+    // again to open a new subscription — assert it's still only been
+    // called once after the job crosses into "Failed", proving the
+    // ticket that was already subscribed is the same one still mounted
+    // rather than a remounted replacement opening a second stream.
+    const { streamLogs } = await import('../api.js');
+    expect(streamLogs).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      streamHandlers['job-react.zip'].onDone({ status: 'failed', error: 'Gradle blew up', exitCode: 1 });
+    });
+
+    await waitFor(() => expect(screen.getByText('Failed')).toBeTruthy());
+    expect(jobNamesInGroup('Failed')).toEqual(['react.zip']);
+    expect(streamLogs).toHaveBeenCalledTimes(1);
   });
 });
