@@ -6,6 +6,10 @@ on:
   pull_request:
     branches: [ "main" ]
 
+env:
+  # Suppress Node 20 deprecation warning (since runner uses Node 24)
+  ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION: false
+
 jobs:
   build-and-push:
     runs-on: ubuntu-latest
@@ -13,7 +17,7 @@ jobs:
     steps:
     # 1. Fetch the code from the repository
     - name: Checkout repository
-      uses: actions/checkout@v6
+      uses: actions/checkout@v4
 
     # 2. Set up QEMU for multi-platform builds (Optional but recommended)
     - name: Set up QEMU
@@ -36,7 +40,8 @@ jobs:
       id: meta
       uses: docker/metadata-action@v5
       with:
-        images: ${{ secrets.DOCKER_USERNAME }}/apkit
+        images: |
+          ${{ secrets.DOCKER_USERNAME }}/apkit
         tags: |
           type=raw,value=latest
           type=sha,format=short
