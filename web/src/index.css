@@ -453,6 +453,7 @@ body {
   }
   .sidebar-nav-item {
     flex: 1 1 auto;
+    width: auto;
     justify-content: center;
     min-width: 76px;
   }
@@ -641,18 +642,19 @@ button { font-family: inherit; }
 .ticket-list {
   display: flex;
   flex-direction: column;
-  gap: 18px;
+  gap: 8px;
   margin-top: 8px;
 }
 
-/* Each status gets its own group so a build that just failed never ends up
-   sandwiched between two still-running ones. */
-.ticket-group {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
+/* Each status gets its own header row so a build that just failed never
+   ends up sandwiched between two still-running ones — but every ticket
+   stays a direct child of .ticket-list (not nested inside a per-group
+   wrapper) so a job moving between groups only repositions its existing
+   JobTicket via React's key-based reconciliation instead of unmounting
+   and remounting it (see the ticketRows comment in App.jsx for why that
+   matters — a remount reopens the build's log stream from scratch). This
+   rule reproduces the same "18px above, 8px below" rhythm the old nested
+   layout had using margin instead of two nested flex gaps. */
 .ticket-group-title {
   display: flex;
   align-items: center;
@@ -664,7 +666,9 @@ button { font-family: inherit; }
   letter-spacing: 0.06em;
   color: var(--dim);
   padding: 0 2px;
+  margin-top: 10px;
 }
+.ticket-group-title:first-child { margin-top: 0; }
 
 .ticket-group-count {
   font-family: var(--mono);
@@ -677,10 +681,10 @@ button { font-family: inherit; }
   padding: 1px 7px;
 }
 
-.ticket-group-running .ticket-group-title { color: var(--copper); }
-.ticket-group-success .ticket-group-title { color: var(--teal); }
-.ticket-group-failed .ticket-group-title { color: var(--coral); }
-.ticket-group-stopped .ticket-group-title { color: var(--faint); }
+.ticket-group-title-running { color: var(--copper); }
+.ticket-group-title-success { color: var(--teal); }
+.ticket-group-title-failed { color: var(--coral); }
+.ticket-group-title-stopped { color: var(--faint); }
 
 .ticket {
   display: flex;

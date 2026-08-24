@@ -260,6 +260,27 @@ function Dashboard({ user, onLogout }) {
     .map((group) => ({ ...group, jobs: jobs.filter(group.match) }))
     .filter((group) => group.jobs.length > 0);
 
+  // Flattened into one list of rows (group-header rows interleaved with
+  // job rows) rather than each status bucket being a separate parent
+  // <div>. A job moving from "running" to "failed" changes which header
+  // it sits under, but as long as every JobTicket stays a direct child of
+  // the SAME <div className="ticket-list"> the whole time, React's keyed
+  // reconciliation (key={job.tempId}) just repositions that DOM node —
+  // it never unmounts/remounts the component. Nesting tickets inside a
+  // separate <div> per group used to do exactly that on every
+  // running→terminal transition: a fresh JobTicket mount reran its
+  // subscription effect, opening a second EventSource for a job whose
+  // build had already finished, which immediately got back another
+  // synchronous "done" reply from the server and fired every completion
+  // side effect (the toast, the error-assistant panel, browser
+  // notification) a second time — and silently reset any local state the
+  // old instance held (an open log panel's scroll position, an in-progress
+  // quick-fix edit) in the process.
+  const ticketRows = ticketGroups.flatMap((group) => [
+    { type: 'header', key: `h-${group.key}`, group },
+    ...group.jobs.map((job) => ({ type: 'job', key: job.tempId, job })),
+  ]);
+
   return (
     <div className="app-frame">
       <div className="app-layout">
@@ -284,11 +305,12 @@ function Dashboard({ user, onLogout }) {
                 <div className="eyebrow"><BrandMark />apkit<span className="eyebrow-sep">·</span>build floor</div>
                 <ThemeSwitcher theme={theme} onChange={setTheme} compact />
               </div>
-              <h1>Turn React, Kotlin, or Java projects into APKs, all at once</h1>
+              <h1>Turn React, Kotlin, Java, or Flutter projects into APKs, all at once</h1>
               <p className="sub">
-                Drop in a React/Vite web project (built via Capacitor) or a native Kotlin/Java
-                Android project (built directly with its own Gradle wrapper) — each runs in its
-                own isolated, disposable container with a pre-configured Android SDK.
+                Drop in a React/Vite web project (built via Capacitor), a native Kotlin/Java
+                Android project (built directly with its own Gradle wrapper), or a Flutter (Dart)
+                project (built with the Flutter CLI) — each runs in its own isolated, disposable
+                container with a pre-configured Android SDK.
               </p>
               <VisitorStats />
             </header>
@@ -321,24 +343,23 @@ function Dashboard({ user, onLogout }) {
                   <div className="empty-floor-sub">Drop a project above to start your first build.</div>
                 </div>
               ) : (
-                ticketGroups.map((group) => (
-                  <div className={`ticket-group ticket-group-${group.key}`} key={group.key}>
-                    <div className="ticket-group-title">
-                      {group.title}
-                      <span className="ticket-group-count">{group.jobs.length}</span>
+                ticketRows.map((row) =>
+                  row.type === 'header' ? (
+                    <div className={`ticket-group-title ticket-group-title-${row.group.key}`} key={row.key}>
+                      {row.group.title}
+                      <span className="ticket-group-count">{row.group.jobs.length}</span>
                     </div>
-                    {group.jobs.map((job) => (
-                      <JobTicket
-                        key={job.tempId}
-                        job={job}
-                        onUpdate={patchJob}
-                        onDone={handleJobDone}
-                        onNotice={pushToast}
-                        onRemove={removeJob}
-                      />
-                    ))}
-                  </div>
-                ))
+                  ) : (
+                    <JobTicket
+                      key={row.key}
+                      job={row.job}
+                      onUpdate={patchJob}
+                      onDone={handleJobDone}
+                      onNotice={pushToast}
+                      onRemove={removeJob}
+                    />
+                  )
+                )
               )}
             </div>
 

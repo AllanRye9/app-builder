@@ -17,7 +17,7 @@ export default function IntroModal({ open, onClose }) {
             <span className="intro-step-num">1</span>
             <div>
               <div className="intro-step-title">Drop a .zip</div>
-              <div className="intro-step-sub">A React/Vite project (Capacitor) or a native Kotlin/Java Gradle project — several at once is fine.</div>
+              <div className="intro-step-sub">A React/Vite project (Capacitor), a native Kotlin/Java Gradle project, or a Flutter (Dart) project — several at once is fine.</div>
             </div>
           </li>
           <li>
@@ -31,7 +31,7 @@ export default function IntroModal({ open, onClose }) {
             <span className="intro-step-num">3</span>
             <div>
               <div className="intro-step-title">Download your APK</div>
-              <div className="intro-step-sub">Watch it build live, then grab the signed APK the moment it's ready. If something fails, a help panel opens automatically.</div>
+              <div className="intro-step-sub">Watch it build live, then grab the installable APK the moment it's ready. If something fails, a help panel opens automatically.</div>
             </div>
           </li>
         </ol>
