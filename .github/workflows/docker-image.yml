@@ -13,7 +13,7 @@ jobs:
     steps:
     # 1. Fetch the code from the repository
     - name: Checkout repository
-      uses: actions/checkout@v4
+      uses: actions/checkout@v6
 
     # 2. Set up QEMU for multi-platform builds (Optional but recommended)
     - name: Set up QEMU
