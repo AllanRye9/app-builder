@@ -15,8 +15,12 @@ jobs:
     - name: Checkout repository
       uses: actions/checkout@v4
 
-    # DEBUG: Check if DOCKER_USERNAME secret exists
+    # DEBUG: Check if DOCKER_USERNAME secret exists.
+    # Only enforced when we're actually about to push (a real push to main) — PRs,
+    # including ones from forks, never receive repo secrets and never push, so they
+    # must not be blocked on this.
     - name: Debug secrets
+      if: github.event_name != 'pull_request'
       run: |
         if [ -n "${{ secrets.DOCKER_USERNAME }}" ]; then
           echo "DOCKER_USERNAME is set"
@@ -43,11 +47,15 @@ jobs:
         password: ${{ secrets.DOCKER_PASSWORD }}
 
     # 5. Extract Docker metadata with ry versioning
+    # Image name must NOT depend on a secret: secrets are empty on PR runs (especially
+    # from forks), which previously produced an invalid "/apkit" ref and broke the
+    # build step even though PRs never push. Fall back to the repo owner's name so the
+    # build always has a valid tag, with or without secrets being present.
     - name: Extract Docker metadata
       id: meta
       uses: docker/metadata-action@v5
       with:
-        images: ${{ secrets.DOCKER_USERNAME }}/apkit
+        images: ${{ secrets.DOCKER_USERNAME || github.repository_owner }}/apkit
         tags: |
           type=raw,value=latest,enable=${{ github.event_name != 'pull_request' }}
           type=raw,value=ry-${{ github.run_number }}
