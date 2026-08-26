@@ -155,7 +155,7 @@ body {
 /* Scrollable-but-scrollbar-free — applied to every internal panel that
    can overflow (side panels, ticket list, log panel, file tree). Scroll
    still works via wheel/touch/keyboard; only the visible track is gone. */
-.hide-scrollbar { scrollbar-width: none; -ms-overflow-style: none; }
+.hide-scrollbar { scrollbar-width: none; -ms-overflow-style: none; scroll-behavior: smooth; }
 .hide-scrollbar::-webkit-scrollbar { display: none; width: 0; height: 0; }
 
 /* ---------------------------------------------------------------------- */
@@ -963,9 +963,11 @@ button { font-family: inherit; }
   word-break: break-all;
   scrollbar-width: none;
   -ms-overflow-style: none;
+  scroll-behavior: smooth;
 }
 .log-panel::-webkit-scrollbar { display: none; width: 0; height: 0; }
 .log-panel .cursor::after { content: "\258C"; color: var(--copper); animation: pulse 0.9s step-start infinite; }
+.log-line-error { color: var(--coral); }
 
 /* --- Download / error --- */
 .download-btn {
@@ -2260,7 +2262,15 @@ button {
   line-height: 1.6;
   padding: 10px 12px;
   outline: none;
+  /* Match the rest of the app's scrollable panels: scroll stays available
+     via wheel/touch/keyboard, the track just isn't drawn (see
+     .hide-scrollbar above), and programmatic/keyboard scrolling eases
+     instead of jumping. */
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+  scroll-behavior: smooth;
 }
+.pfe-textarea::-webkit-scrollbar { display: none; width: 0; height: 0; }
 
 /* ---------------------------------------------------------------------- */
 /* Quick-fix editor (inside the error assistant panel)                    */
@@ -2497,6 +2507,14 @@ button {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+
+.project-editor-logs {
+  flex-shrink: 0;
+  padding: 8px 18px;
+  border-bottom: 1px solid var(--line);
+}
+.project-editor-log-toggle { padding: 2px 0; }
+.project-editor-logs .log-panel { max-height: 160px; margin-top: 6px; }
 
 .project-editor-body {
   flex: 1;

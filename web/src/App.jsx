@@ -12,7 +12,7 @@ import AuthScreen from './components/AuthScreen.jsx';
 import BrandMark from './components/BrandMark.jsx';
 import VisitorStats from './components/VisitorStats.jsx';
 import { uploadZip, fetchMe, logout as apiLogout } from './api.js';
-import { getToken, setToken, clearToken } from './lib/auth.js';
+import { setToken, clearToken } from './lib/auth.js';
 import { getStoredTheme, applyTheme } from './lib/theme.js';
 
 let nextTempId = 0;
@@ -25,11 +25,13 @@ export default function App() {
   const [user, setUser] = useState(null);
 
   useEffect(() => {
-    const token = getToken();
-    if (!token) {
-      setAuthState('signedOut');
-      return;
-    }
+    // Always ask the server, even with no stored token — this is what
+    // lets login/register stay hidden without special-casing anything on
+    // the frontend. When the server has sign-in required (see
+    // app/config.py's AUTH_REQUIRED), a missing/invalid token still gets a
+    // 401 here exactly as before and AuthScreen shows. When it's off, the
+    // server waves the request through and this resolves straight to
+    // signedIn, so AuthScreen never renders.
     fetchMe()
       .then((u) => { setUser(u); setAuthState('signedIn'); })
       .catch(() => { clearToken(); setAuthState('signedOut'); });

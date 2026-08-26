@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { fetchProjectFiles, askAssistant } from '../api.js';
 import { guessCandidatePaths, isPathImplicated } from '../lib/errorPaths.js';
 import FileEditorPopup from './FileEditorPopup.jsx';
+import LogPanel from './LogPanel.jsx';
 
 // Full-page project browser opened from a failed/stopped build ticket via
 // its "Edit" or "AI" button (see JobTicket.jsx). Unlike the small inline
@@ -20,8 +21,15 @@ export default function ProjectEditorModal({ job, mode, errorContext, readOnly, 
   const [history, setHistory] = useState([]);
   const [question, setQuestion] = useState('');
   const [busy, setBusy] = useState(false);
+  // The build log tail is shown right here, at the site of the edit, so
+  // the failure context stays visible while browsing/fixing files instead
+  // of requiring the person to close this modal to see it on the ticket
+  // behind it. Open by default since that's the point of showing it here;
+  // minimizable for anyone who'd rather have the extra room.
+  const [logOpen, setLogOpen] = useState(true);
 
   const candidatePaths = useMemo(() => guessCandidatePaths(errorContext), [errorContext]);
+  const logLines = errorContext?.logTail || [];
 
   const reload = useCallback(() => {
     if (!job.id) return;
@@ -113,6 +121,21 @@ export default function ProjectEditorModal({ job, mode, errorContext, readOnly, 
           </div>
           <button type="button" className="modal-close" aria-label="Close" onClick={onClose}>×</button>
         </div>
+
+        {logLines.length > 0 && (
+          <div className="project-editor-logs">
+            <button
+              type="button"
+              className="log-toggle project-editor-log-toggle"
+              onClick={() => setLogOpen((o) => !o)}
+              aria-expanded={logOpen}
+            >
+              <span className={`log-toggle-caret${logOpen ? ' open' : ''}`} aria-hidden="true">▸</span>
+              {logOpen ? 'Hide build log' : 'Show build log'}
+            </button>
+            {logOpen && <LogPanel lines={logLines} live={false} />}
+          </div>
+        )}
 
         <div className={`project-editor-body${mode === 'ai' ? ' project-editor-body-split' : ''}`}>
           <div className="project-editor-tree-col">
