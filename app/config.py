@@ -27,6 +27,13 @@ def _env_str(name: str, default: str) -> str:
     return os.environ.get(name) or default
 
 
+def _env_bool(name: str, default: bool) -> bool:
+    raw = os.environ.get(name)
+    if raw is None or raw == "":
+        return default
+    return raw.strip().lower() in ("1", "true", "yes", "on")
+
+
 @dataclass(frozen=True)
 class Settings:
     # Most platforms inject PORT themselves — the app must listen on
@@ -208,8 +215,19 @@ class Settings:
     GEOIP_TIMEOUT_S: float = field(default_factory=lambda: float(_env_str("GEOIP_TIMEOUT_S", "2.5")))
 
     # Accounts + sessions (app/auth.py) — a small SQLite file, same pattern
-    # as VISITOR_DB_PATH above. Sign-in is required for the whole site (see
-    # routes.py's require_auth dependency), not just the build endpoints.
+    # as VISITOR_DB_PATH above. Whether sign-in is actually required for
+    # the whole site is controlled by AUTH_REQUIRED just below — this path
+    # is only relevant while that's on.
+    #
+    # Login/register are hidden for now (AUTH_REQUIRED defaults to False):
+    # app/auth.py's require_auth dependency waves every request through as
+    # a shared guest identity instead of checking a token, and the
+    # frontend (web/src/App.jsx) goes straight to the dashboard. Nothing
+    # about the auth system itself was removed — every route, the signup/
+    # login/logout endpoints, and the AuthScreen component are unchanged
+    # and fully wired, so setting AUTH_REQUIRED=true (or "1") brings real
+    # per-account sign-in straight back with no code changes.
+    AUTH_REQUIRED: bool = field(default_factory=lambda: _env_bool("AUTH_REQUIRED", False))
     AUTH_DB_PATH: Path = field(
         default_factory=lambda: Path(
             os.environ.get("AUTH_DB_PATH") or Path(tempfile.gettempdir()) / "apk-builder-cache" / "auth.db"

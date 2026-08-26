@@ -203,9 +203,23 @@ def token_from_request(request: Request) -> str | None:
     return request.query_params.get("token")
 
 
+_GUEST_USER = User(id="guest", email="guest@apkit.local")
+
+
 async def require_auth(request: Request) -> User:
     """FastAPI dependency: every protected route takes
-    ``user: auth.User = Depends(auth.require_auth)``."""
+    ``user: auth.User = Depends(auth.require_auth)``.
+
+    Login/register are hidden for now (see config.py's AUTH_REQUIRED,
+    default False) — every request is waved through as one shared guest
+    identity instead of needing a token. No route filters or scopes
+    anything by user id, so this is safe: it only changes whether a
+    request needs to prove who it is, not what it can see. Set
+    AUTH_REQUIRED=true to restore real sign-in with no other changes.
+    """
+    if not settings.AUTH_REQUIRED:
+        return _GUEST_USER
+
     token = token_from_request(request)
     user = await user_for_token(token)
     if user is None:
