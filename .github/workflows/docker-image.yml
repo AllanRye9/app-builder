@@ -42,17 +42,23 @@ jobs:
         username: ${{ secrets.DOCKER_USERNAME }}
         password: ${{ secrets.DOCKER_PASSWORD }}
 
-    # 5. Extract Docker metadata
+    # 5. Extract Docker metadata with ry versioning
     - name: Extract Docker metadata
       id: meta
       uses: docker/metadata-action@v5
       with:
         images: ${{ secrets.DOCKER_USERNAME }}/apkit
         tags: |
-          type=raw,value=latest
-          type=sha,format=short
+          type=raw,value=latest,enable=${{ github.event_name != 'pull_request' }}
+          type=raw,value=ry-${{ github.run_number }}
+          type=raw,value=ry-${{ github.run_number }}-{{sha}}
+          type=sha,format=short,prefix=sha-
+          type=ref,event=branch
+          type=ref,event=pr
+        flavor: |
+          latest=false
 
-    # 6. Build and push Docker image
+    # 6. Build and push Docker image with ry versioned tags
     - name: Build and push Docker image
       uses: docker/build-push-action@v6
       with:
@@ -63,3 +69,7 @@ jobs:
         labels: ${{ steps.meta.outputs.labels }}
         cache-from: type=gha
         cache-to: type=gha,mode=max
+        build-args: |
+          BUILD_VERSION=ry-${{ github.run_number }}
+          BUILD_SHA=${{ github.sha }}
+          BUILD_DATE=${{ github.event.repository.updated_at }}
