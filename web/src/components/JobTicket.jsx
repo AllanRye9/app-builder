@@ -1,6 +1,6 @@
 import { memo, useCallback, useEffect, useRef, useState } from 'react';
 import Pipeline from './Pipeline.jsx';
-import LogPanel from './LogPanel.jsx';
+import LogPanel, { countLogErrors } from './LogPanel.jsx';
 import DownloadCard from './DownloadCard.jsx';
 import ErrorBanner from './ErrorBanner.jsx';
 import FileTree from './FileTree.jsx';
@@ -23,11 +23,19 @@ const LOG_FLUSH_MS = 60;
 // into the parent's state and re-render the whole floor on every line.
 // Only the small summary fields (status, error, queue position) are
 // reported upward, for the stats bar and the toast/notification triggers.
-function JobTicket({ job, onUpdate, onDone, onNotice, onRemove }) {
+function JobTicket({ job, onUpdate, onDone, onNotice, onRemove, viewMode = 'card' }) {
   const [logs, setLogs] = useState([]);
   const [stage, setStage] = useState('validating');
   const [expanded, setExpanded] = useState(false);
   const [filesOpen, setFilesOpen] = useState(false);
+  // Only meaningful in list view — card view always shows the full body.
+  // Starts open for anything that already needs attention (failed/stopped)
+  // so switching into list view never hides a build that's waiting on the
+  // person; starts closed for running/queued/success so a dense list of
+  // healthy builds doesn't default to a wall of expanded pipelines.
+  const [detailsOpen, setDetailsOpen] = useState(
+    () => job.status === 'failed' || job.status === 'stopped'
+  );
   const [buildStep, setBuildStep] = useState(null);
   const [buildProgress, setBuildProgress] = useState(0);
   const [cacheHit, setCacheHit] = useState(false);
@@ -142,9 +150,17 @@ function JobTicket({ job, onUpdate, onDone, onNotice, onRemove }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [job.id, buildKey]);
 
+  // A build that just failed or stopped should surface itself even in a
+  // collapsed list row — never make someone hunt for which row needs them.
+  useEffect(() => {
+    if (job.status === 'failed' || job.status === 'stopped') setDetailsOpen(true);
+  }, [job.status]);
+
   const isTerminal = job.status === 'success' || job.status === 'failed' || job.status === 'stopped';
   const isRunning = job.status === 'building';
   const canControl = job.id && isRunning;
+  const errorLogCount = countLogErrors(logs);
+  const showBody = viewMode !== 'list' || detailsOpen;
 
   const runControl = useCallback(
     async (action, label) => {
@@ -193,7 +209,7 @@ function JobTicket({ job, onUpdate, onDone, onNotice, onRemove }) {
     : null;
 
   return (
-    <article className={`ticket ticket-${job.status}${paused ? ' ticket-paused' : ''}`}>
+    <article className={`ticket ticket-${job.status} ticket-view-${viewMode}${paused ? ' ticket-paused' : ''}`}>
       <div className="ticket-stub" aria-hidden="true">
         <StatusGlyph status={job.status} paused={paused} />
       </div>
@@ -205,6 +221,18 @@ function JobTicket({ job, onUpdate, onDone, onNotice, onRemove }) {
             {job.fileSize > 0 && (
               <span className="ticket-size">{(job.fileSize / 1024 / 1024).toFixed(1)} MB</span>
             )}
+            {errorLogCount > 0 && <span className="ticket-error-count" title={`${errorLogCount} error line(s) in the log`}>{errorLogCount} err</span>}
+            {viewMode === 'list' && (
+              <button
+                type="button"
+                className="ticket-details-toggle"
+                onClick={() => setDetailsOpen((o) => !o)}
+                aria-expanded={detailsOpen}
+                aria-label={detailsOpen ? 'Collapse details' : 'Expand details'}
+              >
+                <span className={`log-toggle-caret${detailsOpen ? ' open' : ''}`} aria-hidden="true">▸</span>
+              </button>
+            )}
             {isTerminal && (
               <button className="ticket-dismiss" onClick={() => onRemove(job.tempId)}>
                 Dismiss
@@ -213,6 +241,19 @@ function JobTicket({ job, onUpdate, onDone, onNotice, onRemove }) {
           </div>
         </div>
 
+        {viewMode === 'list' && !showBody && (
+          <div className="ticket-list-summary">
+            <span className={`ticket-list-stage ticket-list-stage-${job.status}`}>
+              {buildStep || stageLabel(job.status, stage)}
+            </span>
+            {isRunning && buildProgress > 0 && (
+              <span className="ticket-list-progress">{buildProgress}%</span>
+            )}
+            {job.status === 'success' && <DownloadCard jobId={job.id} filename={job.fileName} compact />}
+          </div>
+        )}
+
+        {showBody && (
         <Pipeline
           activeStage={stage}
           failed={job.status === 'failed'}
@@ -223,8 +264,9 @@ function JobTicket({ job, onUpdate, onDone, onNotice, onRemove }) {
           buildProgress={buildProgress}
           cacheHit={cacheHit}
         />
+        )}
 
-        {(canControl || job.status === 'failed' || job.status === 'stopped') && (
+        {showBody && (canControl || job.status === 'failed' || job.status === 'stopped') && (
           <div className="build-controls">
             {canControl && !paused && (
               <button type="button" className="control-btn" onClick={handlePause} disabled={controlBusy}>
@@ -260,27 +302,30 @@ function JobTicket({ job, onUpdate, onDone, onNotice, onRemove }) {
           </div>
         )}
 
-        {job.file && <FileTree file={job.file} />}
+        {showBody && job.file && <FileTree file={job.file} />}
 
-        <ErrorBanner
-          message={job.status === 'failed' ? job.error : ''}
-          exitCode={job.status === 'failed' ? exitCode : null}
-        />
-        {job.status === 'stopped' && <div className="stopped-box">Build stopped. Edit files below if needed, then Rebuild.</div>}
+        {showBody && (
+          <ErrorBanner
+            message={job.status === 'failed' ? job.error : ''}
+            exitCode={job.status === 'failed' ? exitCode : null}
+          />
+        )}
+        {showBody && job.status === 'stopped' && <div className="stopped-box">Build stopped. Edit files below if needed, then Rebuild.</div>}
 
-        {job.status === 'success' && <DownloadCard jobId={job.id} filename={job.fileName} />}
+        {showBody && job.status === 'success' && <DownloadCard jobId={job.id} filename={job.fileName} />}
 
-        {logs.length > 0 && (
+        {showBody && logs.length > 0 && (
           <div className="ticket-logs">
             <button className="log-toggle" onClick={() => setExpanded((e) => !e)} aria-expanded={expanded}>
               <span className={`log-toggle-caret${expanded ? ' open' : ''}`} aria-hidden="true">▸</span>
               {expanded ? 'Hide build log' : 'Show build log'}
+              {errorLogCount > 0 && <span className="log-toggle-error-badge">{errorLogCount}</span>}
             </button>
             {expanded && <LogPanel lines={logs} live={!isTerminal} />}
           </div>
         )}
 
-        {job.id && (job.status === 'failed' || job.status === 'stopped' || job.status === 'success' || paused) && (
+        {showBody && job.id && (job.status === 'failed' || job.status === 'stopped' || job.status === 'success' || paused) && (
           <div className="ticket-files">
             <button className="log-toggle" onClick={() => setFilesOpen((e) => !e)} aria-expanded={filesOpen}>
               <span className={`log-toggle-caret${filesOpen ? ' open' : ''}`} aria-hidden="true">▸</span>
@@ -311,6 +356,19 @@ function JobTicket({ job, onUpdate, onDone, onNotice, onRemove }) {
 // re-rendering — and re-running child renders (Pipeline, FileTree, etc.)
 // for every OTHER ticket whenever just one job's status/logs change.
 export default memo(JobTicket);
+
+// Short human label for the list view's collapsed summary row — falls
+// back to the macro pipeline stage when no fine-grained buildStep text has
+// arrived yet (e.g. still validating/queued).
+function stageLabel(status, stage) {
+  if (status === 'success') return 'Ready to download';
+  if (status === 'failed') return 'Failed';
+  if (status === 'stopped') return 'Stopped';
+  if (stage === 'validating') return 'Validating…';
+  if (stage === 'queued') return 'Waiting in queue…';
+  if (stage === 'building') return 'Building…';
+  return 'Working…';
+}
 
 function StatusGlyph({ status, paused }) {
   if (paused) return <span className="glyph glyph-paused">⏸</span>;

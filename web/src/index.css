@@ -203,13 +203,13 @@ body {
 }
 .side-panel-title {
   font-family: var(--mono);
-  font-size: 10px;
+  font-size: 12.5px;
   letter-spacing: 0.08em;
   text-transform: uppercase;
   color: var(--copper);
 }
 .side-panel-subtitle {
-  font-size: 10.5px;
+  font-size: 13px;
   color: var(--copper);
   font-family: var(--mono);
   white-space: nowrap;
@@ -247,7 +247,7 @@ body {
   gap: 7px;
   font-family: var(--display);
   font-weight: 600;
-  font-size: 13.5px;
+  font-size: 16px;
   color: var(--paper);
   min-width: 0;
   overflow: hidden;
@@ -285,7 +285,7 @@ body {
   border: none;
   background: none;
   color: var(--dim);
-  font-size: 12.5px;
+  font-size: 15px;
   cursor: pointer;
   text-align: left;
   transition: background 0.12s ease, color 0.12s ease;
@@ -310,14 +310,14 @@ body {
 .sidebar-panel { padding: 14px 15px; }
 .sidebar-panel-title {
   font-family: var(--mono);
-  font-size: 10px;
+  font-size: 12.5px;
   letter-spacing: 0.08em;
   text-transform: uppercase;
   color: var(--copper);
   margin-bottom: 10px;
 }
 .sidebar-tip-list { margin: 0; padding-left: 16px; }
-.sidebar-tip-list li { font-size: 12px; color: var(--dim); line-height: 1.6; margin-bottom: 6px; }
+.sidebar-tip-list li { font-size: 14.5px; color: var(--dim); line-height: 1.6; margin-bottom: 6px; }
 
 .docs-list-item {
   display: flex;
@@ -327,7 +327,7 @@ body {
   background: none;
   border: none;
   color: var(--paper);
-  font-size: 12.5px;
+  font-size: 15px;
   font-weight: 500;
   cursor: pointer;
   padding: 6px 2px;
@@ -350,12 +350,12 @@ body {
   color: var(--copper);
   font-family: var(--display);
   font-weight: 600;
-  font-size: 14px;
+  font-size: 16.5px;
   display: flex; align-items: center; justify-content: center;
   flex-shrink: 0;
 }
 .profile-email {
-  font-size: 12.5px;
+  font-size: 15px;
   color: var(--paper);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -369,7 +369,7 @@ body {
   border: 1px solid var(--coral-dim);
   background: rgba(255, 107, 94, 0.06);
   color: var(--coral);
-  font-size: 12px;
+  font-size: 14.5px;
   cursor: pointer;
 }
 .sidebar-danger-btn:hover { background: rgba(255, 107, 94, 0.12); }
@@ -377,7 +377,7 @@ body {
   background: none;
   border: none;
   color: var(--copper);
-  font-size: 12px;
+  font-size: 14.5px;
   padding: 0;
   cursor: pointer;
   text-decoration: underline;
@@ -387,7 +387,7 @@ body {
 .settings-group { margin-bottom: 16px; }
 .settings-group:last-child { margin-bottom: 0; }
 .settings-label {
-  font-size: 11px;
+  font-size: 13.5px;
   color: var(--faint);
   text-transform: uppercase;
   letter-spacing: 0.04em;
@@ -405,7 +405,7 @@ body {
   border: 1px solid var(--line);
   border-radius: var(--radius-sm);
   color: var(--dim);
-  font-size: 12px;
+  font-size: 14.5px;
   padding: 6px 9px;
   cursor: pointer;
 }
@@ -464,14 +464,14 @@ body {
 
 @media (max-width: 480px) {
   .app-shell { padding: 18px 12px 32px; }
-  .floor-header h1 { font-size: 21px; }
-  .eyebrow { font-size: 10px; gap: 5px; }
+  .floor-header h1 { font-size: 24px; }
+  .eyebrow { font-size: 12.5px; gap: 5px; }
   .ticket-stub { width: 40px; }
-  .stat { padding: 4px 8px; font-size: 11.5px; }
-  .stat-value { font-size: 13px; }
+  .stat { padding: 4px 8px; font-size: 14px; }
+  .stat-value { font-size: 15.5px; }
   .dropzone { padding: 12px; gap: 10px; }
   .dropzone-glyph { width: 28px; height: 28px; }
-  .sidebar-nav-item { min-width: 64px; font-size: 11.5px; padding: 8px 6px; }
+  .sidebar-nav-item { min-width: 64px; font-size: 14px; padding: 8px 6px; }
   .sidebar-nav-item span { overflow: visible; }
   .modal-head { padding: 13px 14px; }
   .modal-scroll { padding: 13px 14px; }
@@ -491,9 +491,9 @@ button { font-family: inherit; }
 /* ---------------------------------------------------------------------- */
 .app-shell {
   width: 100%;
-  max-width: 780px;
+  max-width: 960px;
   margin: 0 auto;
-  padding: 20px 20px 28px;
+  padding: 22px 24px 30px;
 }
 
 .floor-header { margin-bottom: 14px; }
@@ -508,7 +508,7 @@ button { font-family: inherit; }
 
 .eyebrow {
   font-family: var(--mono);
-  font-size: 11px;
+  font-size: 13.5px;
   letter-spacing: 0.1em;
   color: var(--brand);
   text-transform: uppercase;
@@ -539,7 +539,7 @@ button { font-family: inherit; }
 .floor-header h1 {
   font-family: var(--display);
   font-weight: 600;
-  font-size: 22px;
+  font-size: 25px;
   line-height: 1.16;
   letter-spacing: -0.01em;
   margin: 0 0 6px;
@@ -548,7 +548,7 @@ button { font-family: inherit; }
 .floor-header .sub {
   color: var(--dim);
   margin: 0;
-  font-size: 12.5px;
+  font-size: 15px;
   line-height: 1.48;
   max-width: 60ch;
 }
@@ -582,19 +582,56 @@ button { font-family: inherit; }
 }
 .dropzone-glyph svg { width: 15px; height: 15px; }
 .dropzone-copy { min-width: 0; }
-.dropzone-primary { font-size: 13.5px; font-weight: 500; margin-bottom: 2px; }
-.dropzone-secondary { font-size: 11.5px; color: var(--dim); line-height: 1.45; }
+.dropzone-primary { font-size: 16px; font-weight: 500; margin-bottom: 2px; }
+.dropzone-secondary { font-size: 14px; color: var(--dim); line-height: 1.45; }
 .dropzone input[type="file"] { display: none; }
 
 /* ---------------------------------------------------------------------- */
 /* Stats bar                                                              */
 /* ---------------------------------------------------------------------- */
+.floor-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
 .stats-bar {
   display: flex;
   gap: 6px;
   margin: 12px 0 8px;
   flex-wrap: wrap;
 }
+
+/* --- List / Card layout switch for the build floor --- */
+.view-switch {
+  display: flex;
+  gap: 2px;
+  padding: 3px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--surface);
+  flex-shrink: 0;
+}
+.view-switch-btn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  border: none;
+  background: none;
+  color: var(--dim);
+  border-radius: 999px;
+  padding: 6px 12px;
+  font-size: 13.5px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.12s ease, color 0.12s ease;
+}
+.view-switch-btn svg { width: 14px; height: 14px; }
+.view-switch-btn:hover { color: var(--paper); }
+.view-switch-btn.active { background: var(--surface-2); color: var(--paper); }
+.view-switch-btn.active svg { color: var(--copper); }
 .stat {
   display: flex;
   align-items: baseline;
@@ -603,10 +640,10 @@ button { font-family: inherit; }
   border-radius: 999px;
   border: 1px solid var(--line);
   background: var(--surface);
-  font-size: 12.5px;
+  font-size: 15px;
 }
-.stat-value { font-family: var(--mono); font-weight: 600; font-size: 14px; }
-.stat-label { color: var(--dim); text-transform: uppercase; letter-spacing: 0.04em; font-size: 11px; }
+.stat-value { font-family: var(--mono); font-weight: 600; font-size: 16.5px; }
+.stat-label { color: var(--dim); text-transform: uppercase; letter-spacing: 0.04em; font-size: 13.5px; }
 .stat-active .stat-value { color: var(--copper); }
 .stat-queued .stat-value { color: var(--violet); }
 .stat-done .stat-value { color: var(--teal); }
@@ -633,17 +670,43 @@ button { font-family: inherit; }
   color: var(--faint);
 }
 .empty-floor-glyph svg { width: 20px; height: 20px; }
-.empty-floor-title { color: var(--paper); font-family: var(--display); font-size: 15px; font-weight: 600; margin-bottom: 4px; }
-.empty-floor-sub { font-size: 13px; }
+.empty-floor-title { color: var(--paper); font-family: var(--display); font-size: 17px; font-weight: 600; margin-bottom: 4px; }
+.empty-floor-sub { font-size: 15.5px; }
 
 /* ---------------------------------------------------------------------- */
 /* Ticket list + ticket card                                              */
 /* ---------------------------------------------------------------------- */
 .ticket-list {
+  margin-top: 8px;
+}
+
+/* List layout: every ticket is a single flowing column, same as the
+   original design — group headers span full width, tickets stack. */
+.ticket-list-list {
   display: flex;
   flex-direction: column;
-  gap: 8px;
-  margin-top: 8px;
+  gap: 6px;
+}
+
+/* Card layout: group headers span the full row, tickets tile into a
+   responsive grid (auto-fill so it degrades to one column gracefully on
+   narrow viewports without needing a media query breakpoint here). */
+.ticket-list-card {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
+  gap: 10px;
+  align-items: start;
+}
+.ticket-list-card .ticket-group-title {
+  grid-column: 1 / -1;
+}
+.ticket-list-card .ticket {
+  height: 100%;
+  border-radius: calc(var(--radius) + 2px);
+  box-shadow: 0 8px 20px rgba(0, 0, 0, 0.16);
+}
+.ticket-list-card .ticket:hover {
+  border-color: var(--dim);
 }
 
 /* Each status gets its own header row so a build that just failed never
@@ -660,7 +723,7 @@ button { font-family: inherit; }
   align-items: center;
   gap: 8px;
   font-family: var(--display);
-  font-size: 12px;
+  font-size: 14.5px;
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.06em;
@@ -672,7 +735,7 @@ button { font-family: inherit; }
 
 .ticket-group-count {
   font-family: var(--mono);
-  font-size: 11px;
+  font-size: 13.5px;
   font-weight: 600;
   color: var(--faint);
   background: var(--surface);
@@ -729,7 +792,7 @@ button { font-family: inherit; }
   width: 22px; height: 22px;
   border-radius: 50%;
   display: flex; align-items: center; justify-content: center;
-  font-size: 12px;
+  font-size: 14.5px;
   font-family: var(--mono);
   border: 1.5px solid var(--line);
   color: var(--dim);
@@ -758,7 +821,7 @@ button { font-family: inherit; }
 }
 .ticket-name {
   font-family: var(--mono);
-  font-size: 13.5px;
+  font-size: 16px;
   font-weight: 500;
   color: var(--paper);
   overflow: hidden;
@@ -766,18 +829,76 @@ button { font-family: inherit; }
   white-space: nowrap;
 }
 .ticket-head-right { display: flex; align-items: center; gap: 10px; flex-shrink: 0; }
-.ticket-size { font-size: 11.5px; color: var(--faint); font-family: var(--mono); }
+.ticket-size { font-size: 14px; color: var(--faint); font-family: var(--mono); }
 .ticket-dismiss {
   background: none;
   border: 1px solid var(--line);
   color: var(--dim);
   border-radius: 999px;
-  font-size: 11px;
+  font-size: 13.5px;
   padding: 4px 10px;
   cursor: pointer;
   transition: border-color 0.15s ease, color 0.15s ease;
 }
 .ticket-dismiss:hover { border-color: var(--dim); color: var(--paper); }
+
+.ticket-error-count {
+  background: var(--coral);
+  color: #2a0a08;
+  font-family: var(--mono);
+  font-weight: 700;
+  font-size: 12px;
+  border-radius: 999px;
+  padding: 1px 7px;
+  line-height: 1.5;
+  white-space: nowrap;
+}
+
+/* Chevron that expands/collapses a ticket's full detail in list view only
+   — card view always shows everything, so this button doesn't render
+   there at all (see JobTicket.jsx). */
+.ticket-details-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px; height: 24px;
+  border-radius: 50%;
+  border: 1px solid var(--line);
+  background: none;
+  color: var(--dim);
+  cursor: pointer;
+  flex-shrink: 0;
+}
+.ticket-details-toggle:hover { color: var(--paper); border-color: var(--dim); }
+
+/* Collapsed list-row summary: the one extra line shown in place of the
+   full pipeline/controls/log stack while a ticket is collapsed. */
+.ticket-list-summary {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 14px;
+}
+.ticket-list-stage { color: var(--dim); }
+.ticket-list-stage-building { color: var(--copper); }
+.ticket-list-stage-success { color: var(--teal); }
+.ticket-list-stage-failed { color: var(--coral); }
+.ticket-list-stage-stopped { color: var(--faint); }
+.ticket-list-progress {
+  font-family: var(--mono);
+  font-size: 13px;
+  color: var(--faint);
+}
+.ticket-list-summary .download-btn-compact { margin-left: auto; }
+
+/* List view's ticket rows read as a dense table, not a stack of cards —
+   less internal padding, and the perforated ticket-stub motif (built for
+   a card's height) is toned down so a collapsed row stays genuinely
+   compact instead of carrying the full card's vertical rhythm. */
+.ticket-view-list .ticket-stub { width: 40px; }
+.ticket-view-list .ticket-body { padding: 8px 12px; }
+.ticket-view-list .ticket-head { margin-bottom: 0; }
+.ticket-view-list:has(.ticket-list-summary) .ticket-head { margin-bottom: 6px; }
 
 /* --- Pipeline (compact horizontal stepper) --- */
 .pipeline {
@@ -797,7 +918,7 @@ button { font-family: inherit; }
   border: 1.5px solid var(--line);
   flex-shrink: 0;
   display: flex; align-items: center; justify-content: center;
-  font-size: 9px;
+  font-size: 12px;
   font-family: var(--mono);
 }
 .step.done .step-dot { border-color: var(--teal); background: var(--teal); color: #06231a; }
@@ -807,7 +928,7 @@ button { font-family: inherit; }
   animation: pulse 1s ease-in-out infinite;
 }
 .step.failed .step-dot { border-color: var(--coral); background: var(--coral); color: #2a0a08; }
-.step-label { font-size: 11.5px; white-space: nowrap; }
+.step-label { font-size: 14px; white-space: nowrap; }
 .step.done .step-label, .step.active .step-label { color: var(--paper); }
 .step.failed .step-label { color: var(--coral); }
 .step-rule {
@@ -832,7 +953,7 @@ button { font-family: inherit; }
   flex: 1 1 auto;
   min-width: 0;
   font-family: var(--mono);
-  font-size: 11.5px;
+  font-size: 14px;
   color: var(--dim);
   white-space: nowrap;
   overflow: hidden;
@@ -841,7 +962,7 @@ button { font-family: inherit; }
 .cache-badge {
   flex-shrink: 0;
   font-family: var(--mono);
-  font-size: 10.5px;
+  font-size: 13px;
   letter-spacing: 0.02em;
   color: var(--teal);
   background: rgba(50, 201, 154, 0.1);
@@ -877,7 +998,7 @@ button { font-family: inherit; }
   border-radius: var(--radius);
   border: 1px solid var(--line);
   background: var(--surface);
-  font-size: 12px;
+  font-size: 14.5px;
 }
 .sys-bar-low {
   border-color: var(--coral);
@@ -896,12 +1017,12 @@ button { font-family: inherit; }
 }
 .sys-bar-dot-active { background: var(--copper); box-shadow: 0 0 8px var(--copper); }
 .sys-bar-dot-queued { background: var(--violet); box-shadow: 0 0 8px var(--violet); }
-.sys-bar-label { color: var(--paper); font-size: 12.5px; }
+.sys-bar-label { color: var(--paper); font-size: 15px; }
 .sys-bar-mem {
   flex: 1 1 160px;
   min-width: 140px;
 }
-.sys-bar-mem .sys-bar-label { color: var(--dim); font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em; }
+.sys-bar-mem .sys-bar-label { color: var(--dim); font-size: 13.5px; text-transform: uppercase; letter-spacing: 0.04em; }
 .sys-bar-mem-track {
   flex: 1;
   height: 5px;
@@ -919,14 +1040,14 @@ button { font-family: inherit; }
 .sys-bar-mem-fill.low { background: linear-gradient(90deg, var(--coral-dim), var(--coral)); }
 .sys-bar-mem-value {
   font-family: var(--mono);
-  font-size: 11px;
+  font-size: 13.5px;
   color: var(--paper);
   min-width: 30px;
   text-align: right;
 }
 .sys-bar-warning {
   color: var(--coral);
-  font-size: 12px;
+  font-size: 14.5px;
 }
 
 /* --- Log panel + toggle --- */
@@ -939,35 +1060,138 @@ button { font-family: inherit; }
   border: none;
   color: var(--dim);
   font-family: var(--mono);
-  font-size: 11.5px;
+  font-size: 14px;
   cursor: pointer;
   padding: 4px 0;
 }
 .log-toggle:hover { color: var(--paper); }
-.log-toggle-caret { display: inline-block; transition: transform 0.15s ease; font-size: 10px; }
+.log-toggle-caret { display: inline-block; transition: transform 0.15s ease; font-size: 12.5px; }
 .log-toggle-caret.open { transform: rotate(90deg); }
 
+.log-panel-wrap { margin-top: 8px; }
+
+/* Sticky-feeling summary strip above the scrollable log itself — line
+   count plus a live badge while a build is streaming, and warn/error
+   counts so a failure is obvious without having to scroll the log to
+   find it. */
+.log-panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 7px 12px;
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-bottom: none;
+  border-radius: var(--radius-sm) var(--radius-sm) 0 0;
+  font-family: var(--mono);
+}
+.log-panel-title {
+  font-size: 12.5px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--dim);
+}
+.log-panel-stats {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.log-panel-live {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--copper);
+}
+.log-panel-live-dot {
+  width: 6px; height: 6px;
+  border-radius: 50%;
+  background: var(--copper);
+  box-shadow: 0 0 6px var(--copper);
+  animation: pulse 1s ease-in-out infinite;
+}
+.log-panel-count { font-size: 12.5px; color: var(--faint); }
+.log-panel-badge {
+  font-size: 12px;
+  font-weight: 600;
+  border-radius: 999px;
+  padding: 1px 8px;
+  line-height: 1.5;
+}
+.log-panel-badge-warn { background: rgba(224, 145, 63, 0.14); color: var(--copper); }
+.log-panel-badge-error { background: var(--coral); color: #2a0a08; }
+
 .log-panel {
-  margin-top: 8px;
   background: var(--ink);
   border: 1px solid var(--line);
   border-radius: var(--radius-sm);
-  padding: 12px 14px;
+  padding: 10px 14px;
   font-family: var(--mono);
-  font-size: 12px;
-  line-height: 1.6;
+  font-size: 14.5px;
+  line-height: 1.65;
   color: #a3afbc;
   max-height: 240px;
   overflow-y: auto;
+  overflow-x: hidden;
   white-space: pre-wrap;
   word-break: break-all;
   scrollbar-width: none;
   -ms-overflow-style: none;
   scroll-behavior: smooth;
 }
+.log-panel-wrap .log-panel-header + .log-panel { border-radius: 0 0 var(--radius-sm) var(--radius-sm); }
 .log-panel::-webkit-scrollbar { display: none; width: 0; height: 0; }
 .log-panel .cursor::after { content: "\258C"; color: var(--copper); animation: pulse 0.9s step-start infinite; }
-.log-line-error { color: var(--coral); }
+
+/* Each rendered line: a fixed-width right-aligned line number, then the
+   text. Error lines get a full-width red-tinted background band (not just
+   colored text) so a failure jumps out while skimming, not just while
+   reading closely — and a warn line gets the softer amber equivalent so
+   the two never compete visually. */
+.log-line {
+  display: flex;
+  gap: 10px;
+  padding: 0 4px;
+  border-radius: 3px;
+}
+.log-line-no {
+  flex-shrink: 0;
+  width: 3.4em;
+  text-align: right;
+  color: var(--faint);
+  opacity: 0.7;
+  user-select: none;
+}
+.log-line-text { flex: 1; min-width: 0; }
+.log-line-warn {
+  background: rgba(224, 145, 63, 0.12);
+  color: #f0c48a;
+}
+.log-line-warn .log-line-no { color: var(--copper); opacity: 0.85; }
+.log-line-error {
+  background: rgba(255, 107, 94, 0.16);
+  color: #ffb8b0;
+  font-weight: 500;
+  box-shadow: inset 2px 0 0 var(--coral);
+}
+.log-line-error .log-line-no { color: var(--coral); opacity: 0.9; }
+
+/* Small red count badge inline on a "Show build log" toggle, so a
+   collapsed log still advertises that it has something to look at. */
+.log-toggle-error-badge {
+  background: var(--coral);
+  color: #2a0a08;
+  font-family: var(--sans);
+  font-weight: 700;
+  font-size: 11.5px;
+  border-radius: 999px;
+  padding: 0px 6px;
+  line-height: 1.5;
+  margin-left: 2px;
+}
 
 /* --- Download / error --- */
 .download-btn {
@@ -980,13 +1204,19 @@ button { font-family: inherit; }
   background: var(--teal);
   color: #06231a;
   font-weight: 600;
-  font-size: 13.5px;
+  font-size: 16px;
   text-decoration: none;
   transition: opacity 0.15s ease;
 }
 .download-btn svg { width: 15px; height: 15px; }
 .download-btn:hover { opacity: 0.88; }
-.download-hint { font-weight: 400; opacity: 0.75; font-family: var(--mono); font-size: 12px; }
+.download-hint { font-weight: 400; opacity: 0.75; font-family: var(--mono); font-size: 14.5px; }
+.download-btn-compact {
+  margin-top: 0;
+  padding: 5px 12px;
+  font-size: 13.5px;
+}
+.download-btn-compact svg { width: 13px; height: 13px; }
 
 .error-box {
   margin-top: 8px;
@@ -998,7 +1228,7 @@ button { font-family: inherit; }
   background: rgba(255, 107, 94, 0.08);
   border: 1px solid rgba(255, 107, 94, 0.3);
   color: #ffb8b0;
-  font-size: 12px;
+  font-size: 14.5px;
   font-family: var(--mono);
   line-height: 1.45;
 }
@@ -1023,13 +1253,13 @@ button { font-family: inherit; }
   color: #2a0a08;
   font-family: var(--sans);
   font-weight: 700;
-  font-size: 10px;
+  font-size: 12.5px;
   display: flex; align-items: center; justify-content: center;
 }
 
 .app-footer {
   color: var(--faint);
-  font-size: 11px;
+  font-size: 13.5px;
   text-align: center;
   margin-top: 16px;
 }
@@ -1075,14 +1305,14 @@ button { font-family: inherit; }
 }
 
 .toast-body { flex: 1; min-width: 0; }
-.toast-title { font-size: 13px; font-weight: 600; margin-bottom: 3px; font-family: var(--display); }
-.toast-message { font-size: 12px; color: var(--dim); line-height: 1.5; }
+.toast-title { font-size: 15.5px; font-weight: 600; margin-bottom: 3px; font-family: var(--display); }
+.toast-message { font-size: 14.5px; color: var(--dim); line-height: 1.5; }
 
 .toast-close {
   background: none;
   border: none;
   color: var(--dim);
-  font-size: 16px;
+  font-size: 18px;
   line-height: 1;
   cursor: pointer;
   padding: 2px 4px;
@@ -1105,7 +1335,7 @@ button { font-family: inherit; }
 /* ---------------------------------------------------------------------- */
 @media (max-width: 560px) {
   .app-shell { padding: 24px 14px 40px; }
-  .floor-header h1 { font-size: 24px; }
+  .floor-header h1 { font-size: 28px; }
   .dropzone { padding: 16px; flex-wrap: wrap; }
   .ticket-body { padding: 12px; }
   .pipeline { flex-wrap: wrap; row-gap: 8px; }
@@ -1118,7 +1348,7 @@ button { font-family: inherit; }
 .permissions-picker { min-width: 0; }
 .permissions-hint {
   color: var(--faint);
-  font-size: 11.5px;
+  font-size: 14px;
   line-height: 1.5;
   margin: 0 0 10px;
 }
@@ -1131,7 +1361,7 @@ button { font-family: inherit; }
   display: flex;
   align-items: flex-start;
   gap: 8px;
-  font-size: 12.5px;
+  font-size: 15px;
   color: var(--paper);
   cursor: pointer;
 }
@@ -1179,13 +1409,13 @@ button { font-family: inherit; }
   border: none;
   color: var(--dim);
   font-family: var(--mono);
-  font-size: 11.5px;
+  font-size: 14px;
   cursor: pointer;
   padding: 7px 10px;
   text-align: left;
 }
 .filetree-toggle:hover { color: var(--paper); }
-.filetree-count { margin-left: auto; color: var(--faint); font-size: 11px; }
+.filetree-count { margin-left: auto; color: var(--faint); font-size: 13.5px; }
 
 .filetree-body {
   padding: 0 10px 10px;
@@ -1198,7 +1428,7 @@ button { font-family: inherit; }
   gap: 8px;
   padding: 10px 2px 2px;
   color: var(--faint);
-  font-size: 11.5px;
+  font-size: 14px;
   font-family: var(--mono);
 }
 .filetree-scanning-bar {
@@ -1227,7 +1457,7 @@ button { font-family: inherit; }
   margin: 10px 2px 8px;
   padding: 7px 10px;
   border-radius: var(--radius-sm);
-  font-size: 11.5px;
+  font-size: 14px;
   line-height: 1.5;
   font-family: var(--mono);
 }
@@ -1252,7 +1482,7 @@ button { font-family: inherit; }
   overflow-y: auto;
   padding: 2px;
   font-family: var(--mono);
-  font-size: 12px;
+  font-size: 14.5px;
   scrollbar-width: none;
   -ms-overflow-style: none;
 }
@@ -1307,7 +1537,7 @@ button { font-family: inherit; }
 
 .filetree-badge {
   flex-shrink: 0;
-  font-size: 9.5px;
+  font-size: 12px;
   letter-spacing: 0.02em;
   border-radius: 999px;
   padding: 1px 7px;
@@ -1318,21 +1548,21 @@ button { font-family: inherit; }
 
 .filetree-truncated {
   margin: 6px 2px 2px;
-  font-size: 11px;
+  font-size: 13.5px;
   color: var(--faint);
   font-family: var(--mono);
 }
 
 /* --- Markdown rendering (structure guide content, left sidebar) --- */
 .guide-markdown {
-  font-size: 12px;
+  font-size: 14.5px;
   line-height: 1.65;
   color: var(--dim);
 }
 .guide-markdown h2 {
   font-family: var(--display);
   font-weight: 600;
-  font-size: 13px;
+  font-size: 15.5px;
   color: var(--paper);
   margin: 16px 0 7px;
 }
@@ -1347,7 +1577,7 @@ button { font-family: inherit; }
 .guide-markdown strong { color: var(--paper); font-weight: 600; }
 .guide-markdown code {
   font-family: var(--mono);
-  font-size: 11px;
+  font-size: 13.5px;
   color: var(--paper);
   background: var(--surface-2);
   border: 1px solid var(--line-soft);
@@ -1359,14 +1589,14 @@ button { font-family: inherit; }
   width: 100%;
   border-collapse: collapse;
   margin: 4px 0 10px;
-  font-size: 11.5px;
+  font-size: 14px;
 }
 .guide-markdown th {
   text-align: left;
   color: var(--faint);
   font-weight: 600;
   text-transform: uppercase;
-  font-size: 10px;
+  font-size: 12.5px;
   letter-spacing: 0.04em;
   padding: 5px 8px;
   border-bottom: 1px solid var(--line);
@@ -1398,10 +1628,10 @@ button { font-family: inherit; }
 .visitor-stat-value {
   font-family: var(--mono);
   font-weight: 600;
-  font-size: 15px;
+  font-size: 17px;
 }
 .visitor-stat-label {
-  font-size: 11px;
+  font-size: 13.5px;
   color: var(--dim);
   text-transform: uppercase;
   letter-spacing: 0.04em;
@@ -1465,7 +1695,7 @@ button { font-family: inherit; }
 }
 .modal-head h2 {
   font-family: var(--display);
-  font-size: 15.5px;
+  font-size: 17.5px;
   margin: 0;
   color: var(--paper);
 }
@@ -1475,7 +1705,7 @@ button { font-family: inherit; }
   color: var(--dim);
   border-radius: 50%;
   width: 26px; height: 26px;
-  font-size: 15px;
+  font-size: 17px;
   line-height: 1;
   cursor: pointer;
   flex-shrink: 0;
@@ -1496,7 +1726,7 @@ button { font-family: inherit; }
 .modal-btn-primary {
   padding: 8px 16px;
   border-radius: var(--radius-sm);
-  font-size: 13px;
+  font-size: 15.5px;
   font-weight: 600;
   cursor: pointer;
   border: 1px solid transparent;
@@ -1517,7 +1747,7 @@ button { font-family: inherit; }
 .confirm-files { margin-bottom: 18px; }
 .confirm-files-label {
   font-family: var(--mono);
-  font-size: 10.5px;
+  font-size: 13px;
   letter-spacing: 0.06em;
   text-transform: uppercase;
   color: var(--copper);
@@ -1533,11 +1763,11 @@ button { font-family: inherit; }
   border: 1px solid var(--line-soft);
   border-radius: var(--radius-sm);
   background: var(--surface);
-  font-size: 12.5px;
+  font-size: 15px;
   margin-bottom: 6px;
 }
 .confirm-file-name { color: var(--paper); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
-.confirm-file-size { color: var(--faint); font-family: var(--mono); font-size: 11px; flex-shrink: 0; }
+.confirm-file-size { color: var(--faint); font-family: var(--mono); font-size: 13.5px; flex-shrink: 0; }
 
 /* --- Intro modal specifics --- */
 .intro-modal { max-width: 480px; }
@@ -1547,13 +1777,13 @@ button { font-family: inherit; }
   gap: 8px;
   font-family: var(--display);
   font-weight: 600;
-  font-size: 15px;
+  font-size: 17px;
   color: var(--brand);
   padding: 22px 24px 0;
 }
 .intro-title {
   font-family: var(--display);
-  font-size: 18px;
+  font-size: 20px;
   font-weight: 600;
   margin: 10px 24px 18px;
   color: var(--paper);
@@ -1570,11 +1800,11 @@ button { font-family: inherit; }
   color: var(--copper);
   font-family: var(--mono);
   font-weight: 600;
-  font-size: 12px;
+  font-size: 14.5px;
   display: flex; align-items: center; justify-content: center;
 }
-.intro-step-title { font-size: 13.5px; font-weight: 600; color: var(--paper); margin-bottom: 2px; }
-.intro-step-sub { font-size: 12px; color: var(--dim); line-height: 1.5; }
+.intro-step-title { font-size: 16px; font-weight: 600; color: var(--paper); margin-bottom: 2px; }
+.intro-step-sub { font-size: 14.5px; color: var(--dim); line-height: 1.5; }
 .intro-close { margin: 22px 24px 24px; width: calc(100% - 48px); text-align: center; }
 
 /* ---------------------------------------------------------------------- */
@@ -1591,7 +1821,7 @@ button { font-family: inherit; }
 .auth-checking {
   color: var(--dim);
   font-family: var(--mono);
-  font-size: 13px;
+  font-size: 15.5px;
 }
 .auth-card {
   width: 100%;
@@ -1609,35 +1839,35 @@ button { font-family: inherit; }
   gap: 8px;
   font-family: var(--display);
   font-weight: 600;
-  font-size: 15px;
+  font-size: 17px;
   color: var(--brand);
   margin-bottom: 18px;
 }
 .auth-title {
   font-family: var(--display);
-  font-size: 20px;
+  font-size: 22px;
   font-weight: 600;
   color: var(--paper);
   margin: 0 0 6px;
 }
-.auth-sub { color: var(--dim); font-size: 13px; line-height: 1.5; margin: 0 0 20px; }
+.auth-sub { color: var(--dim); font-size: 15.5px; line-height: 1.5; margin: 0 0 20px; }
 
 .auth-form { display: flex; flex-direction: column; gap: 14px; }
 .auth-field { display: flex; flex-direction: column; gap: 6px; }
-.auth-field span { font-size: 11.5px; color: var(--dim); text-transform: uppercase; letter-spacing: 0.04em; }
+.auth-field span { font-size: 14px; color: var(--dim); text-transform: uppercase; letter-spacing: 0.04em; }
 .auth-field input {
   background: var(--surface);
   border: 1px solid var(--line);
   border-radius: var(--radius-sm);
   color: var(--paper);
-  font-size: 13.5px;
+  font-size: 16px;
   padding: 9px 11px;
   font-family: var(--sans);
 }
 .auth-field input:focus { outline: none; border-color: var(--copper-dim); }
 
 .auth-error {
-  font-size: 12px;
+  font-size: 14.5px;
   color: #ffb8b0;
   background: rgba(255, 107, 94, 0.09);
   border: 1px solid rgba(255, 107, 94, 0.3);
@@ -1653,7 +1883,7 @@ button { font-family: inherit; }
   background: var(--copper);
   color: #2a1607;
   font-weight: 600;
-  font-size: 13.5px;
+  font-size: 16px;
   cursor: pointer;
 }
 .auth-submit:hover { opacity: 0.9; }
@@ -1667,7 +1897,7 @@ button { font-family: inherit; }
   background: none;
   border: none;
   color: var(--dim);
-  font-size: 12.5px;
+  font-size: 15px;
   cursor: pointer;
   text-decoration: underline;
   text-underline-offset: 2px;
@@ -1691,7 +1921,7 @@ button { font-family: inherit; }
   background: none;
   border: none;
   color: var(--dim);
-  font-size: 15px;
+  font-size: 17px;
   line-height: 1;
   cursor: pointer;
   padding: 2px 4px;
@@ -1707,7 +1937,7 @@ button { font-family: inherit; }
 }
 .assist-context-file {
   font-family: var(--mono);
-  font-size: 11.5px;
+  font-size: 14px;
   color: var(--paper);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -1715,7 +1945,7 @@ button { font-family: inherit; }
   margin-bottom: 3px;
 }
 .assist-context-error {
-  font-size: 11.5px;
+  font-size: 14px;
   color: #ffb8b0;
   line-height: 1.45;
   max-height: 3.2em;
@@ -1734,9 +1964,9 @@ button { font-family: inherit; }
   overflow-y: auto;
   margin-bottom: 10px;
 }
-.assist-empty { font-size: 12px; color: var(--faint); line-height: 1.5; }
+.assist-empty { font-size: 14.5px; color: var(--faint); line-height: 1.5; }
 .assist-msg {
-  font-size: 12.5px;
+  font-size: 15px;
   line-height: 1.5;
   padding: 8px 10px;
   border-radius: var(--radius-sm);
@@ -1756,7 +1986,7 @@ button { font-family: inherit; }
 .assist-typing { font-style: italic; color: var(--faint); }
 .assist-source-tag {
   font-family: var(--mono);
-  font-size: 9.5px;
+  font-size: 12px;
   letter-spacing: 0.04em;
   text-transform: uppercase;
   color: var(--faint);
@@ -1771,7 +2001,7 @@ button { font-family: inherit; }
   border: 1px solid var(--line);
   border-radius: var(--radius-sm);
   color: var(--paper);
-  font-size: 12.5px;
+  font-size: 15px;
   padding: 8px 10px;
 }
 .assist-form input:focus { outline: none; border-color: var(--copper-dim); }
@@ -1970,7 +2200,7 @@ button {
 .paused-badge {
   flex-shrink: 0;
   font-family: var(--mono);
-  font-size: 10.5px;
+  font-size: 13px;
   letter-spacing: 0.02em;
   color: var(--amber);
   background: rgba(240, 180, 41, 0.1);
@@ -1987,7 +2217,7 @@ button {
   background: var(--surface-2);
   border: 1px solid var(--line);
   color: var(--dim);
-  font-size: 12px;
+  font-size: 14.5px;
 }
 
 .error-box-exit { color: var(--faint); font-weight: 400; }
@@ -2001,7 +2231,7 @@ button {
 }
 .control-btn {
   font-family: var(--mono);
-  font-size: 11.5px;
+  font-size: 14px;
   padding: 5px 11px;
   border-radius: 999px;
   border: 1px solid var(--line);
@@ -2019,7 +2249,7 @@ button {
 .control-btn-rebuild { border-color: var(--teal-dim); color: var(--teal); }
 .control-btn-rebuild:hover:not(:disabled) { border-color: var(--teal); }
 .control-message {
-  font-size: 11.5px;
+  font-size: 14px;
   color: var(--coral);
   font-family: var(--mono);
 }
@@ -2058,7 +2288,7 @@ button {
   border-bottom: 1px solid var(--line-soft);
 }
 .pfe-tree-title {
-  font-size: 10.5px;
+  font-size: 13px;
   text-transform: uppercase;
   letter-spacing: 0.05em;
   color: var(--faint);
@@ -2066,7 +2296,7 @@ button {
 }
 .pfe-icon-btn {
   font-family: var(--mono);
-  font-size: 10.5px;
+  font-size: 13px;
   padding: 2px 7px;
   border-radius: 999px;
   border: 1px solid var(--line);
@@ -2085,18 +2315,18 @@ button {
 .pfe-empty {
   padding: 10px 10px;
   color: var(--faint);
-  font-size: 12px;
+  font-size: 14.5px;
 }
 .pfe-editor-empty { padding: 20px 14px; }
 .pfe-error {
   padding: 8px 10px;
   color: var(--coral);
-  font-size: 11.5px;
+  font-size: 14px;
   font-family: var(--mono);
 }
 .pfe-truncated {
   padding: 6px 10px;
-  font-size: 10.5px;
+  font-size: 13px;
   color: var(--faint);
   border-top: 1px solid var(--line-soft);
 }
@@ -2119,7 +2349,7 @@ button {
   border: none;
   color: var(--dim);
   font-family: var(--mono);
-  font-size: 12px;
+  font-size: 14.5px;
   text-align: left;
   cursor: pointer;
   padding: 3px 6px 3px calc(8px + var(--depth, 0) * 13px);
@@ -2131,7 +2361,7 @@ button {
 .pfe-row.active .pfe-row-main { color: var(--paper); }
 .pfe-caret {
   display: inline-block;
-  font-size: 9px;
+  font-size: 12px;
   transition: transform 0.15s ease;
   flex-shrink: 0;
   color: var(--faint);
@@ -2141,7 +2371,7 @@ button {
 .pfe-name { overflow: hidden; text-overflow: ellipsis; }
 .pfe-skip-tag {
   flex-shrink: 0;
-  font-size: 9.5px;
+  font-size: 12px;
   color: var(--faint);
   border: 1px solid var(--line);
   border-radius: 999px;
@@ -2160,7 +2390,7 @@ button {
   border: none;
   color: var(--faint);
   cursor: pointer;
-  font-size: 11px;
+  font-size: 13.5px;
   font-family: var(--mono);
   padding: 2px 4px;
   border-radius: 4px;
@@ -2168,7 +2398,7 @@ button {
 .pfe-row-actions button:hover { color: var(--paper); background: var(--surface-2); }
 .pfe-empty-dir {
   padding: 3px 6px 3px calc(8px + var(--depth, 0) * 13px);
-  font-size: 11px;
+  font-size: 13.5px;
   color: var(--faint);
   font-style: italic;
 }
@@ -2187,12 +2417,12 @@ button {
   border-radius: 4px;
   color: var(--paper);
   font-family: var(--mono);
-  font-size: 11.5px;
+  font-size: 14px;
   padding: 3px 6px;
 }
 .pfe-new-form button {
   font-family: var(--mono);
-  font-size: 11px;
+  font-size: 13.5px;
   padding: 2px 8px;
   border-radius: 4px;
   border: 1px solid var(--line);
@@ -2218,7 +2448,7 @@ button {
   flex: 1;
   min-width: 0;
   font-family: var(--mono);
-  font-size: 11.5px;
+  font-size: 14px;
   color: var(--paper);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -2233,7 +2463,7 @@ button {
 .pfe-save-btn {
   flex-shrink: 0;
   font-family: var(--mono);
-  font-size: 11px;
+  font-size: 13.5px;
   padding: 3px 10px;
   border-radius: 999px;
   border: 1px solid var(--teal-dim);
@@ -2245,7 +2475,7 @@ button {
 .pfe-save-btn:disabled { opacity: 0.4; cursor: default; }
 .pfe-readonly-note {
   padding: 6px 10px;
-  font-size: 11px;
+  font-size: 13.5px;
   color: var(--amber);
   background: rgba(240, 180, 41, 0.08);
   border-bottom: 1px solid var(--line-soft);
@@ -2258,7 +2488,7 @@ button {
   border: none;
   color: #a3afbc;
   font-family: var(--mono);
-  font-size: 12px;
+  font-size: 14.5px;
   line-height: 1.6;
   padding: 10px 12px;
   outline: none;
@@ -2292,19 +2522,19 @@ button {
   border: none;
   color: var(--dim);
   font-family: var(--mono);
-  font-size: 11.5px;
+  font-size: 14px;
   cursor: pointer;
   padding: 7px 9px;
   text-align: left;
 }
 .quickfix-toggle:hover { color: var(--paper); }
 .quickfix-body { padding: 9px; display: flex; flex-direction: column; gap: 8px; }
-.quickfix-hint { font-size: 11px; color: var(--faint); line-height: 1.4; }
+.quickfix-hint { font-size: 13.5px; color: var(--faint); line-height: 1.4; }
 
 .quickfix-chips { display: flex; flex-wrap: wrap; gap: 5px; }
 .quickfix-chip {
   font-family: var(--mono);
-  font-size: 10.5px;
+  font-size: 13px;
   padding: 3px 8px;
   border-radius: 999px;
   border: 1px solid var(--line);
@@ -2328,12 +2558,12 @@ button {
   border-radius: 4px;
   color: var(--paper);
   font-family: var(--mono);
-  font-size: 11.5px;
+  font-size: 14px;
   padding: 5px 7px;
 }
 .quickfix-path-form button {
   font-family: var(--mono);
-  font-size: 11px;
+  font-size: 13.5px;
   padding: 4px 10px;
   border-radius: 4px;
   border: 1px solid var(--line);
@@ -2343,11 +2573,11 @@ button {
 }
 .quickfix-path-form button:hover { color: var(--paper); border-color: var(--dim); }
 
-.quickfix-status { font-size: 11.5px; color: var(--faint); font-family: var(--mono); }
+.quickfix-status { font-size: 14px; color: var(--faint); font-family: var(--mono); }
 .quickfix-error { color: var(--coral); }
 .quickfix-editor-path {
   font-family: var(--mono);
-  font-size: 11px;
+  font-size: 13.5px;
   color: var(--paper);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -2362,7 +2592,7 @@ button {
   border-radius: var(--radius-sm);
   color: #a3afbc;
   font-family: var(--mono);
-  font-size: 11.5px;
+  font-size: 14px;
   line-height: 1.55;
   padding: 8px 9px;
   outline: none;
@@ -2371,7 +2601,7 @@ button {
 .quickfix-actions { display: flex; align-items: center; gap: 8px; }
 .quickfix-save-btn {
   font-family: var(--mono);
-  font-size: 11px;
+  font-size: 13.5px;
   padding: 4px 12px;
   border-radius: 999px;
   border: 1px solid var(--teal-dim);
@@ -2381,7 +2611,7 @@ button {
 }
 .quickfix-save-btn:hover:not(:disabled) { border-color: var(--teal); }
 .quickfix-save-btn:disabled { opacity: 0.4; cursor: default; }
-.quickfix-saved-note { font-size: 11px; color: var(--teal); }
+.quickfix-saved-note { font-size: 13.5px; color: var(--teal); }
 
 /* ---------------------------------------------------------------------- */
 /* Polish pass II: extends the button-lift/glow language from the first   */
@@ -2499,7 +2729,7 @@ button {
 
 .project-editor-error-summary {
   margin-top: 3px;
-  font-size: 12px;
+  font-size: 14.5px;
   color: var(--coral);
   font-family: var(--mono);
   max-width: 640px;
@@ -2508,20 +2738,123 @@ button {
   white-space: nowrap;
 }
 
-.project-editor-logs {
-  flex-shrink: 0;
-  padding: 8px 18px;
-  border-bottom: 1px solid var(--line);
+/* Body + log dock sit side by side, filling the rest of the modal below
+   the header. The dock is a flex item with an explicit width rather than
+   part of the body's own flex row, so collapsing it (see below) never
+   reflows the tree/chat columns' own internal flex-basis math. */
+.project-editor-main {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  align-items: stretch;
 }
-.project-editor-log-toggle { padding: 2px 0; }
-.project-editor-logs .log-panel { max-height: 160px; margin-top: 6px; }
 
 .project-editor-body {
   flex: 1;
   min-height: 0;
+  min-width: 0;
   display: flex;
 }
 .project-editor-body-split .project-editor-tree-col { border-right: 1px solid var(--line); }
+
+/* --- Right-side build-log dock: collapsible via the arrow button on its
+   left edge, matching the same expand/collapse language as the app's left
+   sidebar. Expanded it's a fixed-width column with its own scrollable log;
+   collapsed it shrinks to a slim vertical rail so the tree/chat regain the
+   room, without the log disappearing from reach entirely. --- */
+.project-editor-logdock {
+  flex: 0 0 340px;
+  width: 340px;
+  min-width: 340px;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  border-left: 1px solid var(--line);
+  background: var(--ink);
+  transition: flex-basis 0.18s ease, width 0.18s ease, min-width 0.18s ease;
+}
+.project-editor-logdock.collapsed {
+  flex: 0 0 40px;
+  width: 40px;
+  min-width: 40px;
+}
+.logdock-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+  width: 100%;
+  padding: 10px 12px;
+  border: none;
+  border-bottom: 1px solid var(--line);
+  background: none;
+  color: var(--dim);
+  font-family: var(--mono);
+  font-size: 13px;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  cursor: pointer;
+}
+.logdock-toggle:hover { color: var(--paper); }
+.project-editor-logdock.collapsed .logdock-toggle {
+  flex-direction: column;
+  justify-content: flex-start;
+  height: 100%;
+  padding: 12px 0;
+  border-bottom: none;
+}
+.logdock-arrow {
+  display: inline-block;
+  flex-shrink: 0;
+  transition: transform 0.15s ease;
+  transform: rotate(90deg);
+}
+.logdock-arrow.collapsed { transform: rotate(-90deg); }
+.logdock-rail-label {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  writing-mode: vertical-rl;
+  text-orientation: mixed;
+  white-space: nowrap;
+}
+.logdock-rail-badge {
+  writing-mode: horizontal-tb;
+  background: var(--coral);
+  color: #2a0a08;
+  font-family: var(--sans);
+  font-weight: 700;
+  font-size: 11.5px;
+  border-radius: 999px;
+  padding: 1px 6px;
+  line-height: 1.5;
+}
+.logdock-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 0 10px 10px;
+}
+.logdock-body .log-panel-wrap { height: 100%; display: flex; flex-direction: column; }
+.logdock-body .log-panel { flex: 1; max-height: none; margin-top: 0; border-radius: 0 0 var(--radius-sm) var(--radius-sm); }
+.logdock-body .log-panel-header { position: sticky; top: 0; background: var(--ink); z-index: 1; }
+
+@media (max-width: 1000px) {
+  .project-editor-main { flex-direction: column; }
+  .project-editor-logdock,
+  .project-editor-logdock.collapsed {
+    flex: 0 0 auto;
+    width: 100%;
+    min-width: 0;
+    max-height: 40vh;
+    border-left: none;
+    border-top: 1px solid var(--line);
+  }
+  .project-editor-logdock.collapsed { max-height: none; }
+  .project-editor-logdock.collapsed .logdock-toggle { flex-direction: row; height: auto; padding: 10px 12px; }
+  .logdock-rail-label { writing-mode: horizontal-tb; flex-direction: row; }
+}
 
 .project-editor-tree-col {
   flex: 1 1 340px;
@@ -2541,7 +2874,7 @@ button {
   display: flex;
   align-items: center;
   gap: 6px;
-  font-size: 11.5px;
+  font-size: 14px;
   color: var(--coral);
   padding: 4px 4px 8px;
 }
@@ -2596,7 +2929,7 @@ button {
   align-items: center;
   gap: 8px;
   font-family: var(--mono);
-  font-size: 12.5px;
+  font-size: 15px;
   color: var(--paper);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -2610,7 +2943,7 @@ button {
 }
 .autosave-status {
   font-family: var(--mono);
-  font-size: 10.5px;
+  font-size: 13px;
   color: var(--faint);
   white-space: nowrap;
 }
@@ -2619,7 +2952,7 @@ button {
 .autosave-status-pending { color: var(--amber); }
 
 .file-editor-settings { position: relative; }
-.file-editor-settings-btn { font-size: 13px; }
+.file-editor-settings-btn { font-size: 15.5px; }
 .file-editor-settings-menu {
   position: absolute;
   top: calc(100% + 6px);
@@ -2636,7 +2969,7 @@ button {
   display: flex;
   align-items: center;
   gap: 7px;
-  font-size: 12px;
+  font-size: 14.5px;
   color: var(--dim);
   padding: 5px 3px;
 }

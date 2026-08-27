@@ -2,7 +2,9 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { fetchProjectFiles, askAssistant } from '../api.js';
 import { guessCandidatePaths, isPathImplicated } from '../lib/errorPaths.js';
 import FileEditorPopup from './FileEditorPopup.jsx';
-import LogPanel from './LogPanel.jsx';
+import LogPanel, { countLogErrors } from './LogPanel.jsx';
+
+const LOG_DOCK_KEY = 'apkit:editorLogDockOpen';
 
 // Full-page project browser opened from a failed/stopped build ticket via
 // its "Edit" or "AI" button (see JobTicket.jsx). Unlike the small inline
@@ -21,15 +23,27 @@ export default function ProjectEditorModal({ job, mode, errorContext, readOnly, 
   const [history, setHistory] = useState([]);
   const [question, setQuestion] = useState('');
   const [busy, setBusy] = useState(false);
-  // The build log tail is shown right here, at the site of the edit, so
+  // The build log tail is docked on the right, at the site of the edit, so
   // the failure context stays visible while browsing/fixing files instead
   // of requiring the person to close this modal to see it on the ticket
   // behind it. Open by default since that's the point of showing it here;
-  // minimizable for anyone who'd rather have the extra room.
-  const [logOpen, setLogOpen] = useState(true);
+  // collapsible via the arrow button on its edge for anyone who'd rather
+  // have the extra room, and that preference is remembered across edits.
+  const [logOpen, setLogOpen] = useState(() => {
+    try { return localStorage.getItem(LOG_DOCK_KEY) !== '0'; } catch { return true; }
+  });
+
+  function toggleLogDock() {
+    setLogOpen((o) => {
+      const next = !o;
+      try { localStorage.setItem(LOG_DOCK_KEY, next ? '1' : '0'); } catch { /* ignore */ }
+      return next;
+    });
+  }
 
   const candidatePaths = useMemo(() => guessCandidatePaths(errorContext), [errorContext]);
   const logLines = errorContext?.logTail || [];
+  const logErrorCount = useMemo(() => countLogErrors(logLines), [logLines]);
 
   const reload = useCallback(() => {
     if (!job.id) return;
@@ -122,84 +136,96 @@ export default function ProjectEditorModal({ job, mode, errorContext, readOnly, 
           <button type="button" className="modal-close" aria-label="Close" onClick={onClose}>×</button>
         </div>
 
-        {logLines.length > 0 && (
-          <div className="project-editor-logs">
-            <button
-              type="button"
-              className="log-toggle project-editor-log-toggle"
-              onClick={() => setLogOpen((o) => !o)}
-              aria-expanded={logOpen}
-            >
-              <span className={`log-toggle-caret${logOpen ? ' open' : ''}`} aria-hidden="true">▸</span>
-              {logOpen ? 'Hide build log' : 'Show build log'}
-            </button>
-            {logOpen && <LogPanel lines={logLines} live={false} />}
-          </div>
-        )}
+        <div className="project-editor-main">
+          <div className={`project-editor-body${mode === 'ai' ? ' project-editor-body-split' : ''}`}>
+            <div className="project-editor-tree-col">
+              {candidatePaths.length > 0 && (
+                <div className="project-editor-hint">
+                  <span className="project-editor-hint-dot" aria-hidden="true" />
+                  Files in red are likely involved in the failure — click one to open it.
+                </div>
+              )}
+              {loadError && <div className="pfe-error">{loadError}</div>}
+              <div className="pfe-tree project-editor-tree hide-scrollbar">
+                {tree === null && !loadError && <div className="pfe-empty">Loading…</div>}
+                {tree && tree.length === 0 && <div className="pfe-empty">No project files available.</div>}
+                {tree && tree.map((node) => (
+                  <EditorTreeNode
+                    key={node.path}
+                    node={node}
+                    depth={0}
+                    expandedDirs={expandedDirs}
+                    onToggleDir={toggleDir}
+                    onOpenFile={setOpenPath}
+                    candidatePaths={candidatePaths}
+                  />
+                ))}
+              </div>
+              {truncated && <div className="pfe-truncated">Showing a partial listing — this project has more files than fit here.</div>}
+            </div>
 
-        <div className={`project-editor-body${mode === 'ai' ? ' project-editor-body-split' : ''}`}>
-          <div className="project-editor-tree-col">
-            {candidatePaths.length > 0 && (
-              <div className="project-editor-hint">
-                <span className="project-editor-hint-dot" aria-hidden="true" />
-                Files in red are likely involved in the failure — click one to open it.
+            {mode === 'ai' && (
+              <div className="project-editor-chat-col">
+                <div className="assist-thread hide-scrollbar">
+                  {history.length === 0 && (
+                    <div className="assist-empty">
+                      Ask about this error, or click a red file on the left to fix it directly. Answered
+                      using AI if this instance has a key configured, otherwise from built-in
+                      troubleshooting knowledge.
+                    </div>
+                  )}
+                  {history.map((turn, i) => (
+                    <div key={i} className={`assist-msg assist-msg-${turn.role}`}>
+                      {turn.role === 'assistant' && turn.source === 'fallback' && (
+                        <div className="assist-source-tag">built-in knowledge</div>
+                      )}
+                      {turn.content}
+                    </div>
+                  ))}
+                  {busy && (
+                    <div className="assist-msg assist-msg-assistant assist-typing">
+                      Thinking
+                      <span className="assist-typing-dots"><span /><span /><span /></span>
+                    </div>
+                  )}
+                </div>
+                <form className="assist-form" onSubmit={send}>
+                  <input
+                    type="text"
+                    value={question}
+                    onChange={(e) => setQuestion(e.target.value)}
+                    placeholder="Ask about this error…"
+                    aria-label="Ask about this error"
+                  />
+                  <button type="submit" disabled={busy || !question.trim()}>Send</button>
+                </form>
               </div>
             )}
-            {loadError && <div className="pfe-error">{loadError}</div>}
-            <div className="pfe-tree project-editor-tree hide-scrollbar">
-              {tree === null && !loadError && <div className="pfe-empty">Loading…</div>}
-              {tree && tree.length === 0 && <div className="pfe-empty">No project files available.</div>}
-              {tree && tree.map((node) => (
-                <EditorTreeNode
-                  key={node.path}
-                  node={node}
-                  depth={0}
-                  expandedDirs={expandedDirs}
-                  onToggleDir={toggleDir}
-                  onOpenFile={setOpenPath}
-                  candidatePaths={candidatePaths}
-                />
-              ))}
-            </div>
-            {truncated && <div className="pfe-truncated">Showing a partial listing — this project has more files than fit here.</div>}
           </div>
 
-          {mode === 'ai' && (
-            <div className="project-editor-chat-col">
-              <div className="assist-thread hide-scrollbar">
-                {history.length === 0 && (
-                  <div className="assist-empty">
-                    Ask about this error, or click a red file on the left to fix it directly. Answered
-                    using AI if this instance has a key configured, otherwise from built-in
-                    troubleshooting knowledge.
-                  </div>
+          {logLines.length > 0 && (
+            <aside className={`project-editor-logdock${logOpen ? '' : ' collapsed'}`} aria-label="Build log">
+              <button
+                type="button"
+                className="logdock-toggle"
+                onClick={toggleLogDock}
+                aria-expanded={logOpen}
+                aria-label={logOpen ? 'Collapse build log' : 'Expand build log'}
+                title={logOpen ? 'Collapse build log' : 'Expand build log'}
+              >
+                <span className={`logdock-arrow${logOpen ? '' : ' collapsed'}`} aria-hidden="true">▸</span>
+                {!logOpen && (
+                  <span className="logdock-rail-label">
+                    Build log{logErrorCount > 0 && <span className="logdock-rail-badge">{logErrorCount}</span>}
+                  </span>
                 )}
-                {history.map((turn, i) => (
-                  <div key={i} className={`assist-msg assist-msg-${turn.role}`}>
-                    {turn.role === 'assistant' && turn.source === 'fallback' && (
-                      <div className="assist-source-tag">built-in knowledge</div>
-                    )}
-                    {turn.content}
-                  </div>
-                ))}
-                {busy && (
-                  <div className="assist-msg assist-msg-assistant assist-typing">
-                    Thinking
-                    <span className="assist-typing-dots"><span /><span /><span /></span>
-                  </div>
-                )}
-              </div>
-              <form className="assist-form" onSubmit={send}>
-                <input
-                  type="text"
-                  value={question}
-                  onChange={(e) => setQuestion(e.target.value)}
-                  placeholder="Ask about this error…"
-                  aria-label="Ask about this error"
-                />
-                <button type="submit" disabled={busy || !question.trim()}>Send</button>
-              </form>
-            </div>
+              </button>
+              {logOpen && (
+                <div className="logdock-body hide-scrollbar">
+                  <LogPanel lines={logLines} live={false} title="Build log" />
+                </div>
+              )}
+            </aside>
           )}
         </div>
       </div>
