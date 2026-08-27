@@ -19,6 +19,7 @@ let nextTempId = 0;
 
 const SIDEBAR_COLLAPSED_KEY = 'apkit:sidebarCollapsed';
 const INTRO_SEEN_KEY = 'apkit:introSeen';
+const VIEW_MODE_KEY = 'apkit:floorViewMode';
 
 export default function App() {
   const [authState, setAuthState] = useState('checking'); // 'checking' | 'signedOut' | 'signedIn'
@@ -88,6 +89,14 @@ function Dashboard({ user, onLogout }) {
   });
   const [section, setSection] = useState('floor');
   const [theme, setTheme] = useState(getStoredTheme);
+  // How the build floor's job tickets are laid out — 'card' shows every
+  // ticket fully expanded in a responsive grid, 'list' shows a dense
+  // single-column list of collapsed rows that expand on demand. Persisted
+  // per-browser since it's a pure display preference, same as the sidebar
+  // collapse state above.
+  const [viewMode, setViewMode] = useState(() => {
+    try { return localStorage.getItem(VIEW_MODE_KEY) === 'list' ? 'list' : 'card'; } catch { return 'card'; }
+  });
   const [showIntro, setShowIntro] = useState(() => {
     try { return localStorage.getItem(INTRO_SEEN_KEY) !== '1'; } catch { return true; }
   });
@@ -130,6 +139,11 @@ function Dashboard({ user, onLogout }) {
 
   function replayIntro() {
     setShowIntro(true);
+  }
+
+  function changeViewMode(mode) {
+    setViewMode(mode);
+    try { localStorage.setItem(VIEW_MODE_KEY, mode); } catch { /* ignore */ }
   }
 
   const pushToast = useCallback((payload) => {
@@ -322,16 +336,36 @@ function Dashboard({ user, onLogout }) {
             <Dropzone onFilesSelected={handleFilesSelected} onReject={handleRejectedFile} />
 
             {jobs.length > 0 && (
-              <div className="stats-bar" aria-label="Build floor summary">
-                <Stat value={counts.building} label="building" tone="active" />
-                <Stat value={counts.queued} label="waiting" tone="queued" />
-                <Stat value={counts.done} label="done" tone="done" />
-                {counts.failed > 0 && <Stat value={counts.failed} label="failed" tone="failed" />}
-                {counts.stopped > 0 && <Stat value={counts.stopped} label="stopped" tone="stopped" />}
+              <div className="floor-toolbar">
+                <div className="stats-bar" aria-label="Build floor summary">
+                  <Stat value={counts.building} label="building" tone="active" />
+                  <Stat value={counts.queued} label="waiting" tone="queued" />
+                  <Stat value={counts.done} label="done" tone="done" />
+                  {counts.failed > 0 && <Stat value={counts.failed} label="failed" tone="failed" />}
+                  {counts.stopped > 0 && <Stat value={counts.stopped} label="stopped" tone="stopped" />}
+                </div>
+                <div className="view-switch" role="group" aria-label="Build list layout">
+                  <button
+                    type="button"
+                    className={`view-switch-btn${viewMode === 'card' ? ' active' : ''}`}
+                    onClick={() => changeViewMode('card')}
+                    aria-pressed={viewMode === 'card'}
+                  >
+                    <IconCards /> Cards
+                  </button>
+                  <button
+                    type="button"
+                    className={`view-switch-btn${viewMode === 'list' ? ' active' : ''}`}
+                    onClick={() => changeViewMode('list')}
+                    aria-pressed={viewMode === 'list'}
+                  >
+                    <IconList /> List
+                  </button>
+                </div>
               </div>
             )}
 
-            <div className="ticket-list hide-scrollbar">
+            <div className={`ticket-list ticket-list-${viewMode} hide-scrollbar`}>
               {jobs.length === 0 ? (
                 <div className="empty-floor">
                   <div className="empty-floor-glyph" aria-hidden="true">
@@ -359,6 +393,7 @@ function Dashboard({ user, onLogout }) {
                       onDone={handleJobDone}
                       onNotice={pushToast}
                       onRemove={removeJob}
+                      viewMode={viewMode}
                     />
                   )
                 )
@@ -393,6 +428,27 @@ function Stat({ value, label, tone }) {
       <span className="stat-value">{value}</span>
       <span className="stat-label">{label}</span>
     </div>
+  );
+}
+
+function IconCards() {
+  return (
+    <svg viewBox="0 0 20 20" fill="none" aria-hidden="true">
+      <rect x="2.5" y="2.5" width="6.5" height="6.5" rx="1.2" stroke="currentColor" strokeWidth="1.4" />
+      <rect x="11" y="2.5" width="6.5" height="6.5" rx="1.2" stroke="currentColor" strokeWidth="1.4" />
+      <rect x="2.5" y="11" width="6.5" height="6.5" rx="1.2" stroke="currentColor" strokeWidth="1.4" />
+      <rect x="11" y="11" width="6.5" height="6.5" rx="1.2" stroke="currentColor" strokeWidth="1.4" />
+    </svg>
+  );
+}
+
+function IconList() {
+  return (
+    <svg viewBox="0 0 20 20" fill="none" aria-hidden="true">
+      <rect x="2.5" y="3.5" width="15" height="3" rx="1" stroke="currentColor" strokeWidth="1.4" />
+      <rect x="2.5" y="8.5" width="15" height="3" rx="1" stroke="currentColor" strokeWidth="1.4" />
+      <rect x="2.5" y="13.5" width="15" height="3" rx="1" stroke="currentColor" strokeWidth="1.4" />
+    </svg>
   );
 }
 
