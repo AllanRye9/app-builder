@@ -4,7 +4,6 @@ import LogPanel, { countLogErrors } from './LogPanel.jsx';
 import DownloadCard from './DownloadCard.jsx';
 import ErrorBanner from './ErrorBanner.jsx';
 import FileTree from './FileTree.jsx';
-import ProjectExplorer from './ProjectExplorer.jsx';
 import ProjectEditorModal from './ProjectEditorModal.jsx';
 import { streamLogs, pauseBuild, resumeBuild, cancelBuild, rebuildJob } from '../api.js';
 
@@ -27,7 +26,6 @@ function JobTicket({ job, onUpdate, onDone, onNotice, onRemove, viewMode = 'card
   const [logs, setLogs] = useState([]);
   const [stage, setStage] = useState('validating');
   const [expanded, setExpanded] = useState(false);
-  const [filesOpen, setFilesOpen] = useState(false);
   // Only meaningful in list view — card view always shows the full body.
   // Starts open for anything that already needs attention (failed/stopped)
   // so switching into list view never hides a build that's waiting on the
@@ -302,8 +300,6 @@ function JobTicket({ job, onUpdate, onDone, onNotice, onRemove, viewMode = 'card
           </div>
         )}
 
-        {showBody && job.file && <FileTree file={job.file} />}
-
         {showBody && (
           <ErrorBanner
             message={job.status === 'failed' ? job.error : ''}
@@ -314,25 +310,24 @@ function JobTicket({ job, onUpdate, onDone, onNotice, onRemove, viewMode = 'card
 
         {showBody && job.status === 'success' && <DownloadCard jobId={job.id} filename={job.fileName} />}
 
-        {showBody && logs.length > 0 && (
-          <div className="ticket-logs">
-            <button className="log-toggle" onClick={() => setExpanded((e) => !e)} aria-expanded={expanded}>
-              <span className={`log-toggle-caret${expanded ? ' open' : ''}`} aria-hidden="true">▸</span>
-              {expanded ? 'Hide build log' : 'Show build log'}
-              {errorLogCount > 0 && <span className="log-toggle-error-badge">{errorLogCount}</span>}
-            </button>
-            {expanded && <LogPanel lines={logs} live={!isTerminal} />}
-          </div>
-        )}
-
-        {showBody && job.id && (job.status === 'failed' || job.status === 'stopped' || job.status === 'success' || paused) && (
-          <div className="ticket-files">
-            <button className="log-toggle" onClick={() => setFilesOpen((e) => !e)} aria-expanded={filesOpen}>
-              <span className={`log-toggle-caret${filesOpen ? ' open' : ''}`} aria-hidden="true">▸</span>
-              {filesOpen ? 'Hide project files' : 'Edit project files'}
-            </button>
-            {filesOpen && (
-              <ProjectExplorer jobId={job.id} readOnly={isRunning && !paused} />
+        {/* "Show build log" and "Archive contents" sit side by side — each
+            keeps its own independent open/closed state (this component's
+            `expanded` vs FileTree's own internal state), so opening one
+            never affects the other. They're grouped in a single flex row
+            purely for layout; whichever panel is expanded drops full-width
+            beneath the row. */}
+        {showBody && (job.file || logs.length > 0) && (
+          <div className="ticket-toggle-row">
+            {job.file && <FileTree file={job.file} />}
+            {logs.length > 0 && (
+              <div className="ticket-logs">
+                <button className="log-toggle" onClick={() => setExpanded((e) => !e)} aria-expanded={expanded}>
+                  <span className={`log-toggle-caret${expanded ? ' open' : ''}`} aria-hidden="true">▸</span>
+                  {expanded ? 'Hide build log' : 'Show build log'}
+                  {errorLogCount > 0 && <span className="log-toggle-error-badge">{errorLogCount}</span>}
+                </button>
+                {expanded && <LogPanel lines={logs} live={!isTerminal} />}
+              </div>
             )}
           </div>
         )}

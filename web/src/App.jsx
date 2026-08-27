@@ -21,9 +21,21 @@ const SIDEBAR_COLLAPSED_KEY = 'apkit:sidebarCollapsed';
 const INTRO_SEEN_KEY = 'apkit:introSeen';
 const VIEW_MODE_KEY = 'apkit:floorViewMode';
 
+// The lightning loading screen's minimum on-screen time. The session check
+// it's gating (fetchMe(), below) usually resolves in well under this on a
+// warm connection — without a floor, the animation would just flash for a
+// single frame and never actually register as a loading moment.
+const LOADING_MIN_MS = 1600;
+
 export default function App() {
   const [authState, setAuthState] = useState('checking'); // 'checking' | 'signedOut' | 'signedIn'
   const [user, setUser] = useState(null);
+  const [minLoadElapsed, setMinLoadElapsed] = useState(false);
+
+  useEffect(() => {
+    const t = setTimeout(() => setMinLoadElapsed(true), LOADING_MIN_MS);
+    return () => clearTimeout(t);
+  }, []);
 
   useEffect(() => {
     // Always ask the server, even with no stored token — this is what
@@ -51,12 +63,8 @@ export default function App() {
     setAuthState('signedOut');
   }
 
-  if (authState === 'checking') {
-    return (
-      <div className="auth-frame">
-        <div className="auth-checking" aria-live="polite">Checking your session…</div>
-      </div>
-    );
+  if (authState === 'checking' || !minLoadElapsed) {
+    return <LoadingScreen />;
   }
 
   if (authState === 'signedOut') {
@@ -64,6 +72,28 @@ export default function App() {
   }
 
   return <Dashboard user={user} onLogout={handleLogout} />;
+}
+
+// Splash screen shown while the session check is in flight — a light-blue
+// lightning bolt (the same --brand hue as the apkit wordmark elsewhere)
+// flickers/strikes for a few seconds before the real content ever mounts.
+// Held up by LOADING_MIN_MS above so it always gets a proper moment on
+// screen rather than blinking past on a fast connection.
+function LoadingScreen() {
+  return (
+    <div className="loading-screen" role="status" aria-live="polite">
+      <div className="loading-bolt-wrap" aria-hidden="true">
+        <span className="loading-bolt-glow" />
+        <svg className="loading-bolt" viewBox="0 0 48 64" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <path d="M27 2 L7 37 H21 L17 62 L41 27 H25 L27 2Z" />
+        </svg>
+      </div>
+      <div className="loading-text">
+        apkit<span className="loading-text-dim"> — powering up</span>
+      </div>
+      <span className="sr-only">Checking your session…</span>
+    </div>
+  );
 }
 
 function Dashboard({ user, onLogout }) {
