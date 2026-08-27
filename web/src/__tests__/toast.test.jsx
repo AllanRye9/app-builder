@@ -14,21 +14,21 @@ describe('ToastStack', () => {
     expect(screen.getByText('Build complete')).toBeTruthy();
     expect(onDismiss).not.toHaveBeenCalled();
 
-    // Before the 9s auto-dismiss timer fires, nothing should happen yet.
-    act(() => { vi.advanceTimersByTime(8000); });
+    // Before the ~2.2s auto-dismiss timer fires, nothing should happen yet.
+    act(() => { vi.advanceTimersByTime(2000); });
     expect(onDismiss).not.toHaveBeenCalled();
 
-    // Crossing the 9s mark should flip the toast into its leaving phase
+    // Crossing that mark should flip the toast into its leaving phase
     // (onDismiss itself is *not* called immediately -- it only fires once
     // the leave animation duration has elapsed).
-    act(() => { vi.advanceTimersByTime(1200); });
+    act(() => { vi.advanceTimersByTime(250); });
     const toastEl = document.querySelector('.toast');
     expect(toastEl.className).toContain('toast-leaving');
     expect(onDismiss).not.toHaveBeenCalled();
 
     // After the leave-animation window, the parent's onDismiss should be
     // invoked so the toast actually gets removed from state.
-    act(() => { vi.advanceTimersByTime(250); });
+    act(() => { vi.advanceTimersByTime(200); });
     expect(onDismiss).toHaveBeenCalledTimes(1);
     expect(onDismiss).toHaveBeenCalledWith(1);
 
@@ -42,14 +42,14 @@ describe('ToastStack', () => {
     const onDismiss = vi.fn();
     render(<ToastStack notices={[{ id: 2, level: 'error', title: 'Build failed', message: 'oops' }]} onDismiss={onDismiss} />);
 
-    // Well past the normal 9s window -- an error toast should still be up.
-    act(() => { vi.advanceTimersByTime(12000); });
+    // Well past the normal ~2.2s window -- an error toast should still be up.
+    act(() => { vi.advanceTimersByTime(3000); });
     expect(onDismiss).not.toHaveBeenCalled();
     expect(document.querySelector('.toast').className).not.toContain('toast-leaving');
 
     // Past its own longer window, it should start leaving too (i.e. it's
     // not permanent -- it just gets more time than a normal toast).
-    act(() => { vi.advanceTimersByTime(9000); });
+    act(() => { vi.advanceTimersByTime(1500); });
     expect(document.querySelector('.toast').className).toContain('toast-leaving');
   });
 

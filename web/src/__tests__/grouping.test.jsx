@@ -93,8 +93,9 @@ describe('build floor grouping', () => {
   it('buckets jobs into Running / Successful / Failed / Stopped sections, not one mixed list', async () => {
     render(<App />);
 
-    // Wait past the session check.
-    await waitFor(() => expect(screen.getByLabelText('Add project archives')).toBeTruthy());
+    // Wait past the session check and the loading screen's minimum
+    // display time (see App.jsx's LOADING_MIN_MS).
+    await waitFor(() => expect(screen.getByLabelText('Add project archives')).toBeTruthy(), { timeout: 3000 });
 
     await dropFiles(['kotlin.zip', 'react.zip', 'flutter.zip', 'java.zip']);
 
@@ -153,7 +154,7 @@ describe('build floor grouping', () => {
 
   it('keeps the same JobTicket mounted (does not reopen its log stream) when a job moves from running into a terminal group', async () => {
     render(<App />);
-    await waitFor(() => expect(screen.getByLabelText('Add project archives')).toBeTruthy());
+    await waitFor(() => expect(screen.getByLabelText('Add project archives')).toBeTruthy(), { timeout: 3000 });
 
     await dropFiles(['react.zip']);
     await waitFor(() => expect(Object.keys(streamHandlers).length).toBe(1));

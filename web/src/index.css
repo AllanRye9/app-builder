@@ -685,16 +685,18 @@ button { font-family: inherit; }
 .ticket-list-list {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 5px;
 }
 
 /* Card layout: group headers span the full row, tickets tile into a
    responsive grid (auto-fill so it degrades to one column gracefully on
-   narrow viewports without needing a media query breakpoint here). */
+   narrow viewports without needing a media query breakpoint here). Kept
+   compact — narrower minimum tile width and a tighter gap — so more of
+   the build floor is visible at once without scrolling. */
 .ticket-list-card {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
-  gap: 10px;
+  grid-template-columns: repeat(auto-fill, minmax(276px, 1fr));
+  gap: 8px;
   align-items: start;
 }
 .ticket-list-card .ticket-group-title {
@@ -723,13 +725,13 @@ button { font-family: inherit; }
   align-items: center;
   gap: 8px;
   font-family: var(--display);
-  font-size: 14.5px;
+  font-size: 13.5px;
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.06em;
   color: var(--dim);
   padding: 0 2px;
-  margin-top: 10px;
+  margin-top: 8px;
 }
 .ticket-group-title:first-child { margin-top: 0; }
 
@@ -767,7 +769,7 @@ button { font-family: inherit; }
    restrained: this is the one signature flourish on the page. */
 .ticket-stub {
   position: relative;
-  width: 52px;
+  width: 42px;
   flex-shrink: 0;
   display: flex;
   align-items: center;
@@ -789,10 +791,10 @@ button { font-family: inherit; }
 .ticket-stub::after { bottom: -6px; }
 
 .glyph {
-  width: 22px; height: 22px;
+  width: 19px; height: 19px;
   border-radius: 50%;
   display: flex; align-items: center; justify-content: center;
-  font-size: 14.5px;
+  font-size: 13px;
   font-family: var(--mono);
   border: 1.5px solid var(--line);
   color: var(--dim);
@@ -810,18 +812,18 @@ button { font-family: inherit; }
 .glyph-failed { border-color: var(--coral); background: var(--coral); color: #2a0a08; }
 @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.25; } }
 
-.ticket-body { flex: 1; min-width: 0; padding: 10px 13px; }
+.ticket-body { flex: 1; min-width: 0; padding: 8px 11px; }
 
 .ticket-head {
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
-  gap: 12px;
-  margin-bottom: 9px;
+  gap: 10px;
+  margin-bottom: 7px;
 }
 .ticket-name {
   font-family: var(--mono);
-  font-size: 16px;
+  font-size: 14.5px;
   font-weight: 500;
   color: var(--paper);
   overflow: hidden;
@@ -909,16 +911,16 @@ button { font-family: inherit; }
 .step {
   display: flex;
   align-items: center;
-  gap: 7px;
+  gap: 6px;
   color: var(--faint);
 }
 .step-dot {
-  width: 15px; height: 15px;
+  width: 13px; height: 13px;
   border-radius: 50%;
   border: 1.5px solid var(--line);
   flex-shrink: 0;
   display: flex; align-items: center; justify-content: center;
-  font-size: 12px;
+  font-size: 11px;
   font-family: var(--mono);
 }
 .step.done .step-dot { border-color: var(--teal); background: var(--teal); color: #06231a; }
@@ -928,18 +930,18 @@ button { font-family: inherit; }
   animation: pulse 1s ease-in-out infinite;
 }
 .step.failed .step-dot { border-color: var(--coral); background: var(--coral); color: #2a0a08; }
-.step-label { font-size: 14px; white-space: nowrap; }
+.step-label { font-size: 13px; white-space: nowrap; }
 .step.done .step-label, .step.active .step-label { color: var(--paper); }
 .step.failed .step-label { color: var(--coral); }
 .step-rule {
-  width: 20px; height: 1px;
+  width: 16px; height: 1px;
   background: var(--line);
-  margin: 0 6px;
+  margin: 0 5px;
   flex-shrink: 0;
 }
 .step.done .step-rule { background: var(--teal-dim); }
 
-.pipeline-wrap { display: flex; flex-direction: column; gap: 7px; }
+.pipeline-wrap { display: flex; flex-direction: column; gap: 6px; }
 
 /* --- Pipeline detail row: fine-grained step text + progress bar, shown
    only while the 'Build' macro-stage is active --- */
@@ -1051,6 +1053,29 @@ button { font-family: inherit; }
 }
 
 /* --- Log panel + toggle --- */
+/* "Show build log" and "Archive contents" sit inline, side by side, as
+   independent flex items — each keeps its own toggle state, so opening
+   one never affects the other. They wrap on narrow tickets rather than
+   overflowing, and whichever one is expanded takes the full row width so
+   its panel has room to breathe. */
+.ticket-toggle-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: 4px 18px;
+  margin-top: 8px;
+}
+.ticket-toggle-row .filetree,
+.ticket-toggle-row .ticket-logs {
+  margin-top: 0;
+  flex: 1 1 200px;
+  min-width: 200px;
+}
+.ticket-toggle-row .filetree:has(.filetree-body),
+.ticket-toggle-row .ticket-logs:has(.log-panel-wrap) {
+  flex-basis: 100%;
+}
+
 .ticket-logs { margin-top: 8px; }
 .log-toggle {
   display: flex;
@@ -1133,7 +1158,9 @@ button { font-family: inherit; }
   font-size: 14.5px;
   line-height: 1.65;
   color: #a3afbc;
-  max-height: 240px;
+  height: 240px;
+  min-height: 110px;
+  max-height: 75vh;
   overflow-y: auto;
   overflow-x: hidden;
   white-space: pre-wrap;
@@ -1141,6 +1168,10 @@ button { font-family: inherit; }
   scrollbar-width: none;
   -ms-overflow-style: none;
   scroll-behavior: smooth;
+  /* Draggable from the bottom-right corner — the exact hint the browser
+     draws there also visually implies "there's more room if you need it",
+     on top of just being functional. */
+  resize: vertical;
 }
 .log-panel-wrap .log-panel-header + .log-panel { border-radius: 0 0 var(--radius-sm) var(--radius-sm); }
 .log-panel::-webkit-scrollbar { display: none; width: 0; height: 0; }
@@ -1232,18 +1263,16 @@ button { font-family: inherit; }
   font-family: var(--mono);
   line-height: 1.45;
 }
-/* Full detail already popped up as a toast the moment this happened (see
-   App.jsx's handleJobDone) — this stays as a compact, clamped reference on
-   the ticket itself rather than a second place you have to scroll to read
-   the whole thing. */
+/* The full message matters for debugging — a truncated summary here was
+   easy to miss and forced a trip to the toast (which is gone by the time
+   you look) or the build log to see what actually happened. Wraps in
+   full, with its own scroll once it gets long, instead of clipping. */
 .error-box-text {
   min-width: 0;
-  max-height: 3.2em;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
+  max-height: 9em;
+  overflow-y: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
 }
 .error-box-glyph {
   flex-shrink: 0;
@@ -1300,7 +1329,7 @@ button { font-family: inherit; }
    has had time to finish (see ToastStack.jsx's LEAVE_ANIMATION_MS), so it
    visibly slides/fades away instead of just disappearing. */
 .toast-leaving {
-  animation: toast-out 0.22s ease-in forwards;
+  animation: toast-out 0.14s ease-in forwards;
   pointer-events: none;
 }
 
@@ -1823,6 +1852,83 @@ button { font-family: inherit; }
   font-family: var(--mono);
   font-size: 15.5px;
 }
+
+.sr-only {
+  position: absolute;
+  width: 1px; height: 1px;
+  padding: 0; margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* ---------------------------------------------------------------------- */
+/* Loading screen — light-blue lightning strike shown while the session   */
+/* check is in flight (see App.jsx's LoadingScreen/LOADING_MIN_MS)        */
+/* ---------------------------------------------------------------------- */
+.loading-screen {
+  height: 100dvh;
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 18px;
+  background: var(--ink);
+}
+.loading-bolt-wrap {
+  position: relative;
+  width: 72px;
+  height: 88px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.loading-bolt-glow {
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  background: radial-gradient(circle, color-mix(in srgb, var(--brand) 45%, transparent), transparent 70%);
+  animation: bolt-glow-pulse 1.15s ease-in-out infinite;
+}
+.loading-bolt {
+  position: relative;
+  width: 46px;
+  height: 62px;
+  animation: bolt-flicker 1.15s ease-in-out infinite;
+}
+.loading-bolt path {
+  fill: var(--brand);
+  stroke: var(--brand);
+  stroke-width: 1.5;
+  stroke-linejoin: round;
+  stroke-linecap: round;
+}
+@keyframes bolt-flicker {
+  0%, 40%, 100% { opacity: 1; transform: scale(1); }
+  46% { opacity: 0.45; transform: scale(0.96); }
+  52% { opacity: 1; transform: scale(1.04); }
+  58% { opacity: 0.7; transform: scale(0.99); }
+  64% { opacity: 1; transform: scale(1); }
+}
+@keyframes bolt-glow-pulse {
+  0%, 40%, 100% { opacity: 0.9; }
+  46% { opacity: 0.25; }
+  52% { opacity: 1; }
+  70% { opacity: 0.6; }
+}
+.loading-text {
+  font-family: var(--mono);
+  font-size: 13.5px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--brand);
+}
+.loading-text-dim { color: var(--faint); letter-spacing: 0.06em; }
+@media (prefers-reduced-motion: reduce) {
+  .loading-bolt, .loading-bolt-glow { animation: none; }
+}
 .auth-card {
   width: 100%;
   max-width: 380px;
@@ -1948,12 +2054,10 @@ button { font-family: inherit; }
   font-size: 14px;
   color: #ffb8b0;
   line-height: 1.45;
-  max-height: 3.2em;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
+  max-height: 6.5em;
+  overflow-y: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
 }
 
 .assist-thread {
@@ -2259,7 +2363,6 @@ button {
 /* ---------------------------------------------------------------------- */
 /* Project file explorer (post-upload browse/edit/add/delete/rename)      */
 /* ---------------------------------------------------------------------- */
-.ticket-files { margin-top: 8px; }
 
 .pfe {
   margin-top: 8px;
@@ -2733,9 +2836,11 @@ button {
   color: var(--coral);
   font-family: var(--mono);
   max-width: 640px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  max-height: 4.5em;
+  overflow-y: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+  line-height: 1.5;
 }
 
 /* Body + log dock sit side by side, filling the rest of the modal below

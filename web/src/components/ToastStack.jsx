@@ -1,14 +1,15 @@
 import { useEffect, useRef, useState } from 'react';
 
-const AUTO_DISMISS_MS = 9000;
-// Error toasts stay up longer than the rest — enough time to actually read
-// a build-failure message — but still leave on their own eventually rather
-// than sitting there forever; the person can still close them early.
-const AUTO_DISMISS_ERROR_MS = 20000;
+const AUTO_DISMISS_MS = 2200;
+// Error toasts still get a little more time than the rest — enough to
+// skim a build-failure message — but notifications overall now clear the
+// screen fast; the full detail persists on the ticket itself (error box,
+// build log) so there's no need for the toast to linger.
+const AUTO_DISMISS_ERROR_MS = 4000;
 // Must match the toast-out animation's duration in index.css — the row is
 // only actually removed from state once the leave animation has had time
 // to finish playing, so it slides/fades out instead of just vanishing.
-const LEAVE_ANIMATION_MS = 220;
+const LEAVE_ANIMATION_MS = 140;
 
 export default function ToastStack({ notices, onDismiss }) {
   if (notices.length === 0) return null;
