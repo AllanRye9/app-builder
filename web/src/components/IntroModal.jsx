@@ -17,7 +17,7 @@ export default function IntroModal({ open, onClose }) {
             <span className="intro-step-num">1</span>
             <div>
               <div className="intro-step-title">Drop a .zip</div>
-              <div className="intro-step-sub">A React/Vite project (Capacitor), a native Kotlin/Java Gradle project, or a Flutter (Dart) project — several at once is fine.</div>
+              <div className="intro-step-sub">A React/Vite project (Capacitor), a React Native project, a native Kotlin/Java Gradle project, or a Flutter (Dart) project — several at once is fine.</div>
             </div>
           </li>
           <li>

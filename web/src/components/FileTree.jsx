@@ -112,6 +112,9 @@ function Summary({ result }) {
   if (result.projectType === 'flutter') {
     return <div className="filetree-summary filetree-summary-good">pubspec.yaml found → will build as a Flutter project.</div>;
   }
+  if (result.projectType === 'react-native') {
+    return <div className="filetree-summary filetree-summary-good">package.json declares react-native → will build directly with its own android/ Gradle wrapper.</div>;
+  }
   if (result.projectType === 'capacitor-web') {
     return <div className="filetree-summary filetree-summary-good">package.json found → will build as a web/Capacitor project.</div>;
   }

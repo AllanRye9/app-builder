@@ -222,6 +222,8 @@ async def upload(
             validation_message = "Validation passed: native Kotlin/Java Android (Gradle) project detected."
         elif result.project_type == "flutter":
             validation_message = "Validation passed: Flutter (Dart) project detected."
+        elif result.project_type == "react-native":
+            validation_message = "Validation passed: React Native project detected (its own android/ Gradle project will be built directly)."
         else:
             validation_message = "Validation passed: plain React/Capacitor-ready project detected."
         log(job, validation_message)

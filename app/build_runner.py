@@ -160,15 +160,17 @@ GRADLE_HEAP_MB = max(
 )
 
 # Cap for the Node process running a Capacitor-web job's `npm ci`/`npm run
-# build`/`npx cap ...` steps — previously the *only* build path with no
-# heap ceiling at all (Gradle gets GRADLE_HEAP_MB, Flutter's Dart VM gets
-# FLUTTER_DART_HEAP_MB below), even though a bundler compiling a large web
-# project with source maps can spike memory just as hard as a JVM. Reuses
-# the same per-slot budget GRADLE_HEAP_MB draws from — safe to size
-# identically rather than needing its own split, since a Capacitor job's
-# npm steps and its `gradlew` invocation run sequentially within the same
-# job, never concurrently, so they're never actually claiming their heap
-# caps against this slot's budget at the same instant.
+# build`/`npx cap ...` steps, and (same env var, same reasoning) a React
+# Native job's `npm ci`/`npx react-native bundle` steps — previously the
+# *only* build path(s) with no heap ceiling at all (Gradle gets
+# GRADLE_HEAP_MB, Flutter's Dart VM gets FLUTTER_DART_HEAP_MB below), even
+# though a bundler compiling a large web project (or Metro bundling a
+# large RN app) with source maps can spike memory just as hard as a JVM.
+# Reuses the same per-slot budget GRADLE_HEAP_MB draws from — safe to size
+# identically rather than needing its own split, since both project
+# types' npm/npx steps and their `gradlew` invocation run sequentially
+# within the same job, never concurrently, so they're never actually
+# claiming their heap caps against this slot's budget at the same instant.
 NODE_HEAP_MB = GRADLE_HEAP_MB
 
 # A Flutter build is NOT one JVM per slot the way native-android/Capacitor
@@ -790,6 +792,8 @@ async def _run_build(job: Job) -> None:
             await _run_native_android_build(job, ctx)
         elif job.project_type == "flutter":
             await _run_flutter_build(job, ctx)
+        elif job.project_type == "react-native":
+            await _run_react_native_build(job, ctx)
         else:
             await _run_capacitor_build(job, ctx)
 
@@ -810,12 +814,14 @@ async def _run_build(job: Job) -> None:
         _contexts.pop(job.id, None)
 
 
-async def _run_capacitor_build(job: Job, ctx: _BuildContext) -> None:
-    """Path A: a web project (React/Vite/etc.), wrapped into an Android
-    shell via Capacitor."""
-    project_dir = job.project_dir
-    android_dir = project_dir / "android"
-
+async def _install_node_dependencies(job: Job, ctx: _BuildContext, project_dir: Path) -> None:
+    """Shared `npm ci`/`npm install` step for every project type that has a
+    package.json — currently capacitor-web and react-native. Both go
+    through the exact same dependency-cache-then-install logic (see
+    dep_cache.py); the two build paths only diverge in what they do with
+    node_modules afterward (a web build + Capacitor wrap vs a JS bundle +
+    the project's own android/ Gradle build).
+    """
     has_lockfile = (project_dir / "package-lock.json").exists()
 
     # Dependency cache: skip `npm ci`/`install` entirely when a previous
@@ -852,6 +858,15 @@ async def _run_capacitor_build(job: Job, ctx: _BuildContext) -> None:
             saved = dep_cache.save(dep_hash, project_dir)
             if saved:
                 log(job, "Cached this dependency tree for future builds with the same lockfile.")
+
+
+async def _run_capacitor_build(job: Job, ctx: _BuildContext) -> None:
+    """Path A: a web project (React/Vite/etc.), wrapped into an Android
+    shell via Capacitor."""
+    project_dir = job.project_dir
+    android_dir = project_dir / "android"
+
+    await _install_node_dependencies(job, ctx, project_dir)
 
     set_step(job, "Building web assets", 30)
     await ctx.run("npm", ["run", "build"])
@@ -943,6 +958,109 @@ async def _run_native_android_build(job: Job, ctx: _BuildContext) -> None:
     # Multiple modules could each produce a debug APK (e.g. an app module
     # plus a separate wear/instant module) — take the largest as the most
     # likely "main" app APK rather than guessing by name.
+    apks.sort(key=lambda p: p.stat().st_size, reverse=True)
+
+    _finalize_apk(job, apks[0])
+
+
+_REACT_NATIVE_ENTRY_CANDIDATES = ("index.js", "index.ts", "index.tsx", "index.jsx")
+
+
+def _detect_react_native_entry(project_dir: Path) -> str:
+    """React Native's own default templates always name the entry file
+    `index.js`, but a project scaffolded with TypeScript can legitimately
+    use `index.ts`/`.tsx` instead — checked in the order the RN CLI itself
+    prefers. Falls back to `index.js` (letting the bundle command itself
+    report a clear "file not found" if it's genuinely missing) rather than
+    failing here, since a project with an unconventional entry file path
+    set via its own package.json "main" field is still technically valid.
+    """
+    for candidate in _REACT_NATIVE_ENTRY_CANDIDATES:
+        if (project_dir / candidate).exists():
+            return candidate
+    return "index.js"
+
+
+async def _run_react_native_build(job: Job, ctx: _BuildContext) -> None:
+    """Path D: a React Native project. Unlike capacitor-web, its android/
+    Gradle project is real, hand-maintained source that must already be
+    present in the upload — apkit never runs `react-native init` or
+    otherwise generates one, the way it does for a missing Flutter
+    android/ folder. The JS bundle and its assets are produced up front
+    with `react-native bundle` (forcing --dev false so the resulting debug
+    APK is self-contained and doesn't expect a Metro dev server to be
+    running), then the project's own gradlew builds the APK exactly like a
+    native Android project would.
+    """
+    project_dir = job.project_dir
+    android_dir = project_dir / "android"
+    gradlew_path = android_dir / "gradlew"
+    if not gradlew_path.exists():
+        raise RuntimeError(
+            "No android/gradlew found — a React Native project must include its own android/ "
+            "folder with a complete Gradle wrapper already generated (apkit does not run `react-"
+            "native init`/`npx react-native` to create one, unlike the Flutter path). If this was "
+            "exported from git, check whether .gitignore excluded android/gradlew, "
+            "android/gradlew.bat, or android/gradle/wrapper/gradle-wrapper.jar, and re-add them "
+            "before re-zipping."
+        )
+
+    log(job, "React Native project detected — installing JS dependencies, then building with its own android/ Gradle wrapper.")
+    await _install_node_dependencies(job, ctx, project_dir)
+
+    entry_file = _detect_react_native_entry(project_dir)
+    log(job, f"Using {entry_file} as the React Native entry file.")
+
+    set_step(job, "Bundling JavaScript and assets", 40)
+    # Bundling straight into the android/ module's own source tree (rather
+    # than a temp location Gradle would then need to be told about) is
+    # what makes the debug APK self-contained: with dev=false and this
+    # asset already sitting under app/src/main/, the React Native Gradle
+    # plugin's own bundling task sees prebuilt output and packages it as-
+    # is instead of trying to reach a Metro dev server that doesn't exist
+    # in this container.
+    bundle_output = android_dir / "app" / "src" / "main" / "assets" / "index.android.bundle"
+    assets_dest = android_dir / "app" / "src" / "main" / "res"
+    bundle_output.parent.mkdir(parents=True, exist_ok=True)
+    assets_dest.mkdir(parents=True, exist_ok=True)
+    await ctx.run(
+        "npx",
+        [
+            "react-native", "bundle",
+            "--platform", "android",
+            "--dev", "false",
+            "--entry-file", entry_file,
+            "--bundle-output", str(bundle_output),
+            "--assets-dest", str(assets_dest),
+            "--reset-cache",
+        ],
+    )
+
+    # A module's manifest can live at any <module>/src/main/AndroidManifest.xml
+    # — same reasoning as the native-android path, applied under android/
+    # instead of the project root.
+    manifests = _find_files_recursive(android_dir, lambda name: name == "AndroidManifest.xml", _SOURCE_SEARCH_SKIP_DIRS)
+    for manifest_path in manifests:
+        _patch_manifest_permissions(job, manifest_path)
+
+    set_step(job, "Compiling APK with Gradle", 65)
+    await ctx.run_gradle(gradlew_path, android_dir)
+
+    set_step(job, "Finalizing APK", 95)
+    apk_debug_marker = f"{os.sep}outputs{os.sep}apk{os.sep}debug{os.sep}"
+    apks = [
+        p
+        for p in _find_files_recursive(android_dir, lambda name: name.endswith(".apk"), _OUTPUT_SEARCH_SKIP_DIRS)
+        if apk_debug_marker in str(p)
+    ]
+
+    if not apks:
+        raise RuntimeError(
+            "Gradle reported success but no debug APK was found under android/app/build/outputs/apk/debug/ "
+            "(or any other module's equivalent path)."
+        )
+    # Same reasoning as the native-android path: take the largest APK if a
+    # multi-module project produced more than one debug APK.
     apks.sort(key=lambda p: p.stat().st_size, reverse=True)
 
     _finalize_apk(job, apks[0])

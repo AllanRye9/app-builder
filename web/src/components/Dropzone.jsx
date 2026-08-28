@@ -49,8 +49,10 @@ export default function Dropzone({ onFilesSelected, onReject }) {
         <div className="dropzone-primary">Drop project archives here</div>
         <div className="dropzone-secondary">
           or click to browse — one .zip per project, several at once is fine. Needs a
-          package.json (web/React), a settings.gradle + gradlew (native Kotlin/Java), or a
-          pubspec.yaml (Flutter) somewhere inside — no pre-existing android/ios build output.
+          package.json (web/React, or React Native with its own android/ folder), a
+          settings.gradle + gradlew (native Kotlin/Java), or a pubspec.yaml (Flutter)
+          somewhere inside — no pre-existing android/ios build output (except Flutter's
+          or React Native's own).
         </div>
       </div>
       <input

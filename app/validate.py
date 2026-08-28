@@ -5,6 +5,7 @@ module in place of ``adm-zip``.
 """
 from __future__ import annotations
 
+import json
 import re
 import shutil
 import zipfile
@@ -17,12 +18,18 @@ class ValidationError(Exception):
 
 
 # android/, ios/, and platforms/ are genuinely generated output for a
-# capacitor-web or native-android upload — an existing one would collide
+# capacitor-web upload, and android/ alone is generated output for a
+# native-android upload's build/ (though a native-android project's own
+# android-looking root is the project itself, not a nested folder — this
+# set is about a *top-level* folder named exactly "android"/"ios" showing
+# up inside the archive, which for those two project kinds can only mean
+# stale build output getting re-zipped) — an existing one would collide
 # with what the build creates and can't be safely merged, so those still
-# hard-reject for those two project types. A Flutter project is the one
-# exception: its own android/ (and ios/) folders are real, hand-maintained
-# source — not build output — so FLUTTER_ALLOWED_TOP_LEVEL below is
-# consulted before this rejects, once pubspec.yaml has been spotted
+# hard-reject for those project types. Flutter and React Native are the
+# two exceptions: both ship their own android/ (and ios/) folders as real,
+# hand-maintained source — not build output — so FLUTTER_ALLOWED_TOP_LEVEL
+# / REACT_NATIVE_ALLOWED_TOP_LEVEL below are consulted before this rejects,
+# once a pubspec.yaml or a "react-native" dependency has been spotted
 # anywhere in the archive. A capacitor.config.json/.ts by itself is
 # different again: plenty of real Capacitor-ready projects ship one
 # deliberately, and build_runner.py detects it and reuses it instead of
@@ -36,13 +43,24 @@ FORBIDDEN_TOP_LEVEL = frozenset({"android", "ios", "platforms"})
 # hard reject even for a pubspec.yaml upload.
 FLUTTER_ALLOWED_TOP_LEVEL = frozenset({"android", "ios"})
 
+# Same idea as FLUTTER_ALLOWED_TOP_LEVEL, for a React Native project: its
+# android/ (and ios/) folders are the project's own native shell — created
+# once by `react-native init`/`@react-native-community/cli` and then
+# hand-edited by the app author (native modules, Gradle config, signing,
+# permissions, ...) — never something this build generates the way
+# capacitor-web's android/ is. "platforms" is still excluded for the same
+# reason as above (that's Cordova's marker, not React Native's).
+REACT_NATIVE_ALLOWED_TOP_LEVEL = frozenset({"android", "ios"})
+
 # Only these file types are trusted to build the app itself. Anything else
 # in the archive (editor/OS cruft, license files, whatever) is simply
 # skipped rather than failing the whole upload — none of it is needed to
 # build the APK.
 #
-# Covers all three project kinds this builder accepts:
+# Covers all four project kinds this builder accepts:
 #  - a web project (React/Vite/etc.) wrapped into Android via Capacitor
+#  - a React Native project, built directly with its own bundled android/
+#    Gradle project after the JS bundle is produced
 #  - a native Android project written in Kotlin and/or Java, built with its
 #    own Gradle project directly (no Capacitor/web step at all)
 #  - a Flutter project (Dart), built with its embedded android/ Gradle
@@ -92,6 +110,35 @@ _SETTINGS_GRADLE_RE = re.compile(r"(^|/)settings\.gradle(\.kts)?$")
 _PUBSPEC_RE = re.compile(r"(^|/)pubspec\.yaml$")
 
 
+def _package_json_deps_include_react_native(raw: bytes | str) -> bool:
+    """True if a package.json's dependencies or devDependencies declare
+    "react-native" — the one unambiguous marker distinguishing a React
+    Native project from a plain web project that also happens to have a
+    package.json (capacitor-web). Checked in both places, same as
+    everywhere else, since a project might list it only as a
+    devDependency (some templates do) — either counts.
+
+    Deliberately permissive about malformed input: a package.json that
+    fails to parse just means "not detected as React Native here", not a
+    validation error — detect_project_type()'s own package.json read
+    right after is what actually needs to succeed for the upload to be
+    buildable at all.
+    """
+    try:
+        text = raw.decode("utf-8") if isinstance(raw, bytes) else raw
+        parsed = json.loads(text)
+    except (UnicodeDecodeError, ValueError):
+        return False
+    if not isinstance(parsed, dict):
+        return False
+    deps: dict = {}
+    for key in ("dependencies", "devDependencies"):
+        section = parsed.get(key)
+        if isinstance(section, dict):
+            deps.update(section)
+    return "react-native" in deps
+
+
 @dataclass
 class ExtractResult:
     skipped: list[str]
@@ -121,21 +168,34 @@ def _is_allowed_file(entry_name: str) -> bool:
 
 
 def detect_project_type(dest_dir: Path) -> str | None:
-    """A project is buildable one of three ways, decided purely by what it
+    """A project is buildable one of four ways, decided purely by what it
     contains — never by a flag the uploader has to set:
       - 'flutter': a pubspec.yaml at the root — a Dart/Flutter project,
         built with `flutter build apk` (which drives its own embedded
         android/ Gradle project internally). Checked first since a
         pubspec.yaml is Flutter's own unambiguous marker.
-      - 'capacitor-web': a package.json at the root (React/Vite/etc.),
-        wrapped into an Android shell via Capacitor at build time.
+      - 'react-native': a package.json at the root whose dependencies (or
+        devDependencies) declare "react-native" — built directly with its
+        own bundled android/ Gradle project, after the JS bundle is
+        produced up front (see build_runner.py's
+        _run_react_native_build). Checked before the plainer
+        'capacitor-web' case below, since every React Native project also
+        has a package.json but needs the very different build path.
+      - 'capacitor-web': any other package.json at the root (React/Vite/
+        etc.), wrapped into an Android shell via Capacitor at build time.
       - 'native-android': a Gradle project at the root
         (settings.gradle(.kts) + a root build.gradle(.kts)) with no
         wrapping needed — its own gradlew builds the APK directly.
     """
     if (dest_dir / "pubspec.yaml").exists():
         return "flutter"
-    if (dest_dir / "package.json").exists():
+    package_json_path = dest_dir / "package.json"
+    if package_json_path.exists():
+        try:
+            if _package_json_deps_include_react_native(package_json_path.read_text(encoding="utf-8")):
+                return "react-native"
+        except OSError:
+            pass
         return "capacitor-web"
     has_settings_gradle = (dest_dir / "settings.gradle").exists() or (dest_dir / "settings.gradle.kts").exists()
     has_root_build_gradle = (dest_dir / "build.gradle").exists() or (dest_dir / "build.gradle.kts").exists()
@@ -253,6 +313,25 @@ def validate_and_extract(zip_path: Path, dest_dir: Path) -> ExtractResult:
             _PUBSPEC_RE.search(info.filename.replace("\\", "/")) for info in infos
         )
 
+        # Same reasoning as has_pubspec above: whether android/ or ios/ at
+        # the top level is allowed also depends on whether this is a React
+        # Native upload, and that has to be known before the main
+        # validation loop below runs (entries can appear in any order, so
+        # e.g. "android/..." might be seen before package.json is). Checks
+        # every package.json anywhere in the archive, not just one at the
+        # eventual project root — _locate_project_root() below hasn't run
+        # yet at this point, so the real root isn't known either.
+        has_react_native = False
+        for info in infos:
+            entry_name = info.filename.replace("\\", "/")
+            if _PACKAGE_JSON_RE.search(entry_name) and not entry_name.endswith("/"):
+                try:
+                    if _package_json_deps_include_react_native(zf.read(info)):
+                        has_react_native = True
+                        break
+                except (KeyError, zipfile.BadZipFile):
+                    continue
+
         for info in infos:
             entry_name = info.filename.replace("\\", "/")
 
@@ -262,10 +341,14 @@ def validate_and_extract(zip_path: Path, dest_dir: Path) -> ExtractResult:
             parts = [p for p in entry_name.split("/") if p]
             top_level = parts[0].lower() if parts else ""
 
-            if top_level in FORBIDDEN_TOP_LEVEL and not (has_pubspec and top_level in FLUTTER_ALLOWED_TOP_LEVEL):
+            top_level_is_allowed = (has_pubspec and top_level in FLUTTER_ALLOWED_TOP_LEVEL) or (
+                has_react_native and top_level in REACT_NATIVE_ALLOWED_TOP_LEVEL
+            )
+            if top_level in FORBIDDEN_TOP_LEVEL and not top_level_is_allowed:
                 raise ValidationError(
-                    f'Archive already contains "{parts[0]}". Upload a plain React, native '
-                    f'Android, or Flutter project — the "{parts[0]}" folder is generated by the build.'
+                    f'Archive already contains "{parts[0]}". Upload a plain React, React '
+                    f'Native, native Android, or Flutter project — the "{parts[0]}" folder is '
+                    "generated by the build."
                 )
 
             # Search the whole archive, not just the root — some
@@ -319,9 +402,12 @@ def validate_and_extract(zip_path: Path, dest_dir: Path) -> ExtractResult:
         if entry.is_dir() and name_lower in FORBIDDEN_TOP_LEVEL:
             if has_pubspec and name_lower in FLUTTER_ALLOWED_TOP_LEVEL:
                 continue
+            if has_react_native and name_lower in REACT_NATIVE_ALLOWED_TOP_LEVEL:
+                continue
             raise ValidationError(
-                f'Archive already contains "{entry.name}". Upload a plain React, native '
-                f'Android, or Flutter project — the "{entry.name}" folder is generated by the build.'
+                f'Archive already contains "{entry.name}". Upload a plain React, React Native, '
+                f'native Android, or Flutter project — the "{entry.name}" folder is generated by '
+                "the build."
             )
 
     project_type = detect_project_type(dest_dir)
@@ -331,7 +417,7 @@ def validate_and_extract(zip_path: Path, dest_dir: Path) -> ExtractResult:
             "project root after extraction."
         )
 
-    if project_type == "native-android":
+    if project_type in ("native-android", "react-native"):
         # All four wrapper files are required together — 'gradlew' alone is
         # not enough. Without gradle-wrapper.jar in particular, the wrapper
         # script's own `java -classpath .../gradle-wrapper.jar
@@ -345,7 +431,8 @@ def validate_and_extract(zip_path: Path, dest_dir: Path) -> ExtractResult:
         # Search the whole extracted tree for each wrapper file by name,
         # not just its conventional path — some archives place the
         # wrapper (or the whole project) a folder or two deeper than
-        # dest_dir's own root markers.
+        # dest_dir's own root markers, and a React Native project's own
+        # wrapper lives under android/ rather than at the project root.
         missing_wrapper_files = [
             rel
             for basename, rel in (
@@ -356,11 +443,13 @@ def validate_and_extract(zip_path: Path, dest_dir: Path) -> ExtractResult:
             if _find_anywhere(dest_dir, basename) is None
         ]
         if missing_wrapper_files:
+            project_kind_label = "Native Android" if project_type == "native-android" else "React Native"
+            wrapper_location = "the project root" if project_type == "native-android" else "its android/ folder"
             raise ValidationError(
-                "Native Android projects must include the complete Gradle wrapper — missing: "
-                f"{', '.join(missing_wrapper_files)}. All of gradlew, gradlew.bat, and "
-                "gradle/wrapper/gradle-wrapper.{jar,properties} must be present (run `gradle "
-                "wrapper` in your project and re-zip it if any are missing)."
+                f"{project_kind_label} projects must include the complete Gradle wrapper in "
+                f"{wrapper_location} — missing: {', '.join(missing_wrapper_files)}. All of gradlew, "
+                "gradlew.bat, and gradle/wrapper/gradle-wrapper.{jar,properties} must be present "
+                "(run `gradle wrapper` there and re-zip it if any are missing)."
             )
 
     return ExtractResult(skipped=skipped, project_type=project_type)
