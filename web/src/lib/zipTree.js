@@ -5,10 +5,12 @@ import JSZip from 'jszip';
 // the browser flag the same things the uploader is about to be told about,
 // before the archive ever leaves the browser.
 const FORBIDDEN_TOP_LEVEL = new Set(['android', 'ios', 'platforms']);
-// Subset of FORBIDDEN_TOP_LEVEL a Flutter project is allowed to bring with
-// it — these are the project's own native platform folders, not build
-// output. Mirrors validate.py's FLUTTER_ALLOWED_TOP_LEVEL.
+// Subset of FORBIDDEN_TOP_LEVEL a Flutter or React Native project is
+// allowed to bring with it — these are the project's own native platform
+// folders, not build output. Mirrors validate.py's
+// FLUTTER_ALLOWED_TOP_LEVEL / REACT_NATIVE_ALLOWED_TOP_LEVEL.
 const FLUTTER_ALLOWED_TOP_LEVEL = new Set(['android', 'ios']);
+const REACT_NATIVE_ALLOWED_TOP_LEVEL = new Set(['android', 'ios']);
 const ROOT_MARKERS = new Set([
   'package.json',
   'settings.gradle',
@@ -28,9 +30,10 @@ const WRAPPER_FILES = new Set([
 // past this, the raw count still shows, just without a row-per-file.
 const MAX_RENDERED_ENTRIES = 400;
 
-function flagFor(name, depth, isDir, hasPubspec) {
+function flagFor(name, depth, isDir, hasPubspec, hasReactNative) {
   if (isDir && depth === 0 && FORBIDDEN_TOP_LEVEL.has(name.toLowerCase())) {
     if (hasPubspec && FLUTTER_ALLOWED_TOP_LEVEL.has(name.toLowerCase())) return null;
+    if (hasReactNative && REACT_NATIVE_ALLOWED_TOP_LEVEL.has(name.toLowerCase())) return null;
     return 'forbidden';
   }
   // Root markers are searched for anywhere in the archive, not just at
@@ -40,6 +43,21 @@ function flagFor(name, depth, isDir, hasPubspec) {
   if (!isDir && ROOT_MARKERS.has(name)) return 'marker';
   if (!isDir && WRAPPER_FILES.has(name)) return 'wrapper';
   return null;
+}
+
+// Same check as app/validate.py's _package_json_deps_include_react_native
+// — a package.json's dependencies/devDependencies declaring "react-native"
+// is the one unambiguous marker distinguishing a React Native project from
+// a plain web project that also happens to ship a package.json.
+function packageJsonHasReactNative(text) {
+  try {
+    const parsed = JSON.parse(text);
+    if (!parsed || typeof parsed !== 'object') return false;
+    const deps = { ...(parsed.dependencies || {}), ...(parsed.devDependencies || {}) };
+    return Object.prototype.hasOwnProperty.call(deps, 'react-native');
+  } catch {
+    return false;
+  }
 }
 
 /**
@@ -68,12 +86,34 @@ export async function inspectZip(file) {
 
   // Pre-scan pass: same reason as validate.py's own pre-scan — whether
   // android/ or ios/ at the top level is allowed depends on whether this
-  // is a Flutter upload, and entries are visited in alphabetical order
-  // (so e.g. "android/..." would otherwise be seen before "pubspec.yaml").
+  // is a Flutter or React Native upload, and entries are visited in
+  // alphabetical order (so e.g. "android/..." would otherwise be seen
+  // before pubspec.yaml/package.json is).
   const hasPubspec = entries.some((e) => {
     const parts = e.name.split('/').filter(Boolean);
     return parts.length > 0 && parts[parts.length - 1] === 'pubspec.yaml';
   });
+
+  // Same idea for React Native, but this one needs each candidate
+  // package.json's actual content, not just its name — read every
+  // package.json anywhere in the archive (there's normally only one or
+  // two before node_modules exists) and stop at the first one declaring a
+  // "react-native" dependency.
+  let hasReactNative = false;
+  for (const entry of entries) {
+    if (entry.dir) continue;
+    const parts = entry.name.split('/').filter(Boolean);
+    if (parts.length === 0 || parts[parts.length - 1] !== 'package.json') continue;
+    try {
+      const text = await entry.async('string');
+      if (packageJsonHasReactNative(text)) {
+        hasReactNative = true;
+        break;
+      }
+    } catch {
+      // Unreadable entry — just doesn't count as a React Native marker.
+    }
+  }
 
   for (const entry of entries) {
     const isDir = entry.dir || entry.name.endsWith('/');
@@ -93,7 +133,7 @@ export async function inspectZip(file) {
           return;
         }
         rendered += 1;
-        const flag = flagFor(part, i, thisIsDir, hasPubspec);
+        const flag = flagFor(part, i, thisIsDir, hasPubspec, hasReactNative);
         const newNode = {
           name: part,
           path: pathSoFar,
@@ -129,6 +169,7 @@ export async function inspectZip(file) {
 
   let projectType = null;
   if (hasPubspec) projectType = 'flutter';
+  else if (hasReactNative) projectType = 'react-native';
   else if (hasPackageJson) projectType = 'capacitor-web';
   else if (hasSettingsGradle) projectType = 'native-android';
 

@@ -351,12 +351,13 @@ function Dashboard({ user, onLogout }) {
                 <div className="eyebrow"><BrandMark />apkit<span className="eyebrow-sep">·</span>build floor</div>
                 <ThemeSwitcher theme={theme} onChange={setTheme} compact />
               </div>
-              <h1>Turn React, Kotlin, Java, or Flutter projects into APKs, all at once</h1>
+              <h1>Turn React, React Native, Kotlin, Java, or Flutter projects into APKs, all at once</h1>
               <p className="sub">
-                Drop in a React/Vite web project (built via Capacitor), a native Kotlin/Java
-                Android project (built directly with its own Gradle wrapper), or a Flutter (Dart)
-                project (built with the Flutter CLI) — each runs in its own isolated, disposable
-                container with a pre-configured Android SDK.
+                Drop in a React/Vite web project (built via Capacitor), a React Native project
+                (built directly with its own android/ Gradle wrapper after bundling the JS), a
+                native Kotlin/Java Android project (built directly with its own Gradle wrapper),
+                or a Flutter (Dart) project (built with the Flutter CLI) — each runs in its own
+                isolated, disposable container with a pre-configured Android SDK.
               </p>
               <VisitorStats />
             </header>

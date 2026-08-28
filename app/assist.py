@@ -31,22 +31,31 @@ _ANTHROPIC_TIMEOUT_S = 20.0
 
 _SYSTEM_PROMPT = (
     "You are the troubleshooting assistant embedded in apkit, a tool that turns "
-    "uploaded React/Capacitor, native Kotlin/Java, or Flutter (Dart) project "
-    "archives into unsigned, installable debug Android APKs inside disposable "
-    "build containers. Flutter projects are built with `flutter pub get` followed "
-    "by `flutter build apk --debug`, driving the project's own embedded android/ "
-    "Gradle project — if the uploaded project didn't include an android/ folder "
-    "(or it was missing gradlew/gradle-wrapper.jar, which is normal for a project "
-    "exported from git since Flutter's default .gitignore excludes them), apkit "
-    "runs `flutter create --platforms=android .` first to generate it before "
-    "building. You're shown next to a build that failed. Answer the person's "
-    "question about it directly and concretely — name the likely cause and the "
-    "specific fix (a command to run, a file to check, a line to add), in 2-4 "
-    "short paragraphs or a short list. For a Flutter project, ground the fix in "
-    "the Flutter/Dart toolchain (pubspec.yaml, flutter pub get, flutter build "
-    "apk) rather than assuming a native-Android or npm/Capacitor cause unless the "
-    "error text actually points there. Don't pad with reassurance or ask "
-    "clarifying questions unless the error message genuinely could mean more "
+    "uploaded React/Capacitor, React Native, native Kotlin/Java, or Flutter (Dart) "
+    "project archives into unsigned, installable debug Android APKs inside "
+    "disposable build containers. Flutter projects are built with `flutter pub "
+    "get` followed by `flutter build apk --debug`, driving the project's own "
+    "embedded android/ Gradle project — if the uploaded project didn't include an "
+    "android/ folder (or it was missing gradlew/gradle-wrapper.jar, which is "
+    "normal for a project exported from git since Flutter's default .gitignore "
+    "excludes them), apkit runs `flutter create --platforms=android .` first to "
+    "generate it before building. React Native projects are detected by a "
+    "'react-native' entry in package.json's dependencies/devDependencies, and — "
+    "unlike Flutter — must already include their own android/ folder with a "
+    "complete Gradle wrapper (apkit never generates one for React Native); apkit "
+    "runs `npm ci`/`npm install`, then `npx react-native bundle --platform "
+    "android --dev false` to produce a self-contained JS bundle and assets under "
+    "android/app/src/main/, then `./gradlew assembleDebug` from the android/ "
+    "folder — so a React Native failure before Gradle output appears is almost "
+    "always an npm/Metro/bundling problem, not a Gradle one. You're shown next "
+    "to a build that failed. Answer the person's question about it directly and "
+    "concretely — name the likely cause and the specific fix (a command to run, "
+    "a file to check, a line to add), in 2-4 short paragraphs or a short list. "
+    "Ground the fix in the toolchain that actually matches the project's "
+    "detected type (Flutter/Dart, React Native's npm+bundle+Gradle pipeline, "
+    "plain npm/Capacitor, or native Gradle) rather than assuming a different one "
+    "unless the error text actually points there. Don't pad with reassurance or "
+    "ask clarifying questions unless the error message genuinely could mean more "
     "than one thing. You don't have shell access and can't see anything beyond "
     "what's included in this message. The person can open a quick-fix editor "
     "for any file in their uploaded project right from this panel — if the fix "
@@ -233,6 +242,26 @@ _PATTERNS: list[tuple[tuple[str, ...], str]] = [
         "declared versions) actually resolve cleanly — try `npm install` locally first and confirm it "
         "finishes without errors before re-zipping the project.",
     ),
+    # --- React Native-specific patterns (checked before the generic
+    # native-Android Gradle-wrapper pattern below, for the same reason as
+    # the Flutter ones above: React Native's own embedded android/ build
+    # can surface wrapper-shaped or Gradle-shaped error text too, but the
+    # actual fix is almost always upstream, in npm or the JS bundle step).
+    (
+        ("unable to resolve module", "unable to load script", "no bundle url present", "metro"),
+        "This is a React Native JavaScript bundling error, not a Gradle problem. apkit runs `npx "
+        "react-native bundle --platform android --dev false` before Gradle even starts — check that "
+        "the entry file (index.js, or index.ts) actually exists at the project root and that every "
+        "import it pulls in resolves cleanly; running the same `react-native bundle` command locally "
+        "will reproduce the exact error with more context.",
+    ),
+    (
+        ("no android/gradlew", "android project must include", "react native project must include"),
+        "React Native projects must ship their own android/ folder with a complete Gradle wrapper — "
+        "unlike Flutter, apkit never generates one. If this was exported from git, check whether "
+        ".gitignore excluded android/gradlew, android/gradlew.bat, or "
+        "android/gradle/wrapper/gradle-wrapper.jar, and re-add them before re-zipping.",
+    ),
     (
         ("sdk location not found", "android_home", "no android sdk", "cmdline-tools"),
         "The build container couldn't find a configured Android SDK — this usually means something in "
@@ -251,10 +280,11 @@ _PATTERNS: list[tuple[tuple[str, ...], str]] = [
         ("android/", "ios/", "platforms/"),
         "Archives with a top-level android/, ios/, or platforms/ folder are rejected outright for "
         "web/Capacitor and native-Android uploads, since those are generated by the build itself and "
-        "can't be safely merged with an existing one. A Flutter project is the one exception — its "
-        "own android/ and ios/ folders are real, hand-maintained source and are allowed as soon as a "
-        "pubspec.yaml is present anywhere in the archive. If this isn't a Flutter project, remove that "
-        "folder from the zip and try again; it'll be regenerated fresh during the build.",
+        "can't be safely merged with an existing one. Flutter and React Native are the two exceptions "
+        "— their own android/ and ios/ folders are real, hand-maintained source, allowed as soon as a "
+        "pubspec.yaml or a \"react-native\" dependency is present anywhere in the archive. If this "
+        "isn't a Flutter or React Native project, remove that folder from the zip and try again; it'll "
+        "be regenerated fresh during the build.",
     ),
     (
         ("permission", "manifest.permission", "androidmanifest"),

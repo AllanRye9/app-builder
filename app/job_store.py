@@ -70,7 +70,7 @@ class Job:
     # app/build_runner.py for where these actually get applied.
     permissions: list[str] = field(default_factory=list)
     # Set once validate.py has inspected the extracted project
-    # ('capacitor-web', 'native-android', or 'flutter'); None until then.
+    # ('capacitor-web', 'react-native', 'native-android', or 'flutter'); None until then.
     project_type: str | None = None
     # True while a running build's subprocess (and every process it forked,
     # via SIGSTOP on the whole process group) is genuinely suspended — see
