@@ -45,9 +45,15 @@ _SYSTEM_PROMPT = (
     "complete Gradle wrapper (apkit never generates one for React Native); apkit "
     "runs `npm ci`/`npm install`, then `npx react-native bundle --platform "
     "android --dev false` to produce a self-contained JS bundle and assets under "
-    "android/app/src/main/, then `./gradlew assembleDebug` from the android/ "
-    "folder — so a React Native failure before Gradle output appears is almost "
-    "always an npm/Metro/bundling problem, not a Gradle one. You're shown next "
+    "android/app/src/main/. If the project has Hermes enabled (read from "
+    "android/gradle.properties or app/build.gradle, assumed true if neither says otherwise, since "
+    "that's the default for every RN template since 0.70), that bundle is then compiled in place to "
+    "Hermes bytecode using the project's own node_modules hermesc binary before anything is "
+    "packaged — a plain-JS bundle shipped into a Hermes-enabled APK builds fine and crashes "
+    "immediately on launch, so 'the APK installs but won't open' almost always means this step was "
+    "skipped or failed, not a Gradle problem. Only then does `./gradlew assembleDebug` run from the "
+    "android/ folder — so a React Native failure before Gradle output appears is almost "
+    "always an npm/Metro/bundling/Hermes problem, not a Gradle one. You're shown next "
     "to a build that failed. Answer the person's question about it directly and "
     "concretely — name the likely cause and the specific fix (a command to run, "
     "a file to check, a line to add), in 2-4 short paragraphs or a short list. "
@@ -261,6 +267,16 @@ _PATTERNS: list[tuple[tuple[str, ...], str]] = [
         "unlike Flutter, apkit never generates one. If this was exported from git, check whether "
         ".gitignore excluded android/gradlew, android/gradlew.bat, or "
         "android/gradle/wrapper/gradle-wrapper.jar, and re-add them before re-zipping.",
+    ),
+    (
+        ("no hermesc binary was found", "hermesc"),
+        "This is about the Hermes bytecode compiler, not Gradle. Your project's Android build has "
+        "Hermes enabled, but apkit couldn't find a hermesc binary in node_modules after npm install "
+        "(checked node_modules/react-native/sdks/hermesc/, node_modules/hermes-compiler/, and "
+        "node_modules/hermes-engine/). Confirm the declared react-native version in package.json "
+        "actually bundles a Hermes compiler for Linux (0.60.4+ should) and that npm install for it "
+        "completed cleanly — try `npm install` locally and check that one of those hermesc paths "
+        "actually exists afterward.",
     ),
     (
         ("sdk location not found", "android_home", "no android sdk", "cmdline-tools"),
