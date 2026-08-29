@@ -981,6 +981,141 @@ def _detect_react_native_entry(project_dir: Path) -> str:
     return "index.js"
 
 
+# Matches an uncommented `hermesEnabled=true`/`false` line in
+# android/gradle.properties — the property the current
+# react-native-gradle-plugin template (RN 0.71+) reads to decide whether
+# to use Hermes. `(?m)` so `^`/`$` anchor per line rather than to the
+# whole file, since this is one line among many unrelated ones.
+_HERMES_GRADLE_PROPERTIES_RE = re.compile(r"(?im)^\s*hermesEnabled\s*=\s*(true|false)\s*$")
+# Matches the older, pre-plugin-rewrite `enableHermes: true`/`false` entry
+# inside android/app/build.gradle's `project.ext.react = [ ... ]` block —
+# how RN 0.60.4–0.70 templates toggled Hermes before gradle.properties
+# took over.
+_HERMES_BUILD_GRADLE_RE = re.compile(r"(?i)enableHermes\s*:\s*(true|false)")
+
+# Where `hermesc` (the Hermes bytecode compiler) can be found inside a
+# project's own node_modules, checked in this order:
+#   - RN >=0.69: bundled directly inside the `react-native` package itself.
+#   - A 2026-era `hermes-compiler` package some RN versions have split
+#     Hermes's prebuilt binaries out into, mirroring the same
+#     hermesc/<platform>-bin/hermesc layout under its own package root.
+#   - RN <=0.68 (or an ejected/legacy setup): the older, separate
+#     `hermes-engine` package.
+# Only the linux64 binary is listed since builds always run inside this
+# container, never on macOS/Windows.
+_HERMESC_RELATIVE_CANDIDATES = (
+    Path("node_modules") / "react-native" / "sdks" / "hermesc" / "linux64-bin" / "hermesc",
+    Path("node_modules") / "hermes-compiler" / "hermesc" / "linux64-bin" / "hermesc",
+    Path("node_modules") / "hermes-engine" / "linux64-bin" / "hermesc",
+)
+
+
+def _detect_hermes_enabled(android_dir: Path) -> bool:
+    """Whether this React Native project's Android build uses the Hermes
+    JS engine rather than JSC. This matters because `react-native bundle`
+    (see _run_react_native_build below) always emits plain JavaScript
+    text — Hermes's runtime refuses to execute that directly and expects
+    a file already compiled to Hermes bytecode instead. Getting this
+    wrong produces an APK that builds and installs successfully but
+    crashes the instant it's launched, since Gradle never inspects the
+    bundle's actual contents — only _compile_hermes_bytecode below stands
+    between a correct build and that silent failure mode.
+
+    Checked in the same two places the RN Gradle build itself would read
+    this setting from: android/gradle.properties first (where every
+    template since RN 0.71 sets `hermesEnabled=true` explicitly), falling
+    back to the older `enableHermes: true/false` entry inside
+    android/app/build.gradle's `project.ext.react = [...]` block used by
+    pre-0.71 templates. If neither is present, Hermes is assumed enabled:
+    every actively maintained RN template (0.70+) still defaults to
+    Hermes even when the property line itself is absent from
+    gradle.properties, so treating an unmarked project as JSC would be
+    the more likely of the two guesses to be wrong.
+    """
+    gradle_properties = android_dir / "gradle.properties"
+    if gradle_properties.exists():
+        match = _HERMES_GRADLE_PROPERTIES_RE.search(
+            gradle_properties.read_text(encoding="utf-8", errors="replace")
+        )
+        if match:
+            return match.group(1).lower() == "true"
+
+    app_build_gradle = android_dir / "app" / "build.gradle"
+    if app_build_gradle.exists():
+        match = _HERMES_BUILD_GRADLE_RE.search(
+            app_build_gradle.read_text(encoding="utf-8", errors="replace")
+        )
+        if match:
+            return match.group(1).lower() == "true"
+
+    return True
+
+
+def _find_hermesc(project_dir: Path) -> Path | None:
+    """Locates the Hermes bytecode compiler inside the project's own
+    node_modules (already installed by _install_node_dependencies by the
+    time this is called) — deliberately never falling back to some
+    container-wide install, so the exact Hermes build that ships with
+    whatever `react-native` version this specific project declares is
+    what compiles its bundle, avoiding a version mismatch between the JS
+    engine actually bundled into the APK and the bytecode format used to
+    compile it.
+    """
+    for relative in _HERMESC_RELATIVE_CANDIDATES:
+        candidate = project_dir / relative
+        if candidate.exists():
+            return candidate
+    return None
+
+
+async def _compile_hermes_bytecode(
+    job: Job, ctx: _BuildContext, project_dir: Path, bundle_path: Path
+) -> None:
+    """Replaces a plain-JavaScript bundle in place with its Hermes
+    bytecode equivalent. Hermes detects a bytecode bundle purely by a
+    magic-byte header at the start of the file, never by filename or
+    extension, so the output is written back to the exact same
+    `index.android.bundle` path react-native bundle produced — only the
+    file's contents change, nothing downstream (Gradle, the manifest,
+    the asset path) needs to know this step happened.
+    """
+    hermesc_path = _find_hermesc(project_dir)
+    if hermesc_path is None:
+        raise RuntimeError(
+            "This project's Android build has Hermes enabled (android/gradle.properties or "
+            "app/build.gradle), but no hermesc binary was found under any of node_modules/"
+            "react-native/sdks/hermesc/, node_modules/hermes-compiler/, or node_modules/"
+            "hermes-engine/ after npm install. Without it, the JS bundle can't be compiled to the "
+            "bytecode Hermes requires — the APK would build successfully but crash immediately on "
+            "launch. Confirm the project's declared react-native version actually ships a Hermes "
+            "compiler for linux64 (0.60.4+ should), and that npm install actually completed for it."
+        )
+
+    # hermesc ships inside node_modules with its executable bit already
+    # set in the vast majority of cases, but a zip/re-zip round trip (this
+    # project's node_modules was just installed fresh inside a zipped
+    # upload's project directory) is exactly the kind of operation that
+    # can silently drop it — cheap to force here rather than have an
+    # otherwise fully successful build fail on a plain permission error.
+    with contextlib.suppress(OSError):
+        hermesc_path.chmod(hermesc_path.stat().st_mode | 0o111)
+
+    log(
+        job,
+        "Hermes is enabled for this project — compiling the JS bundle to Hermes bytecode before "
+        "it's packaged (a plain-JS bundle would build fine but crash on launch under Hermes).",
+    )
+    bytecode_path = bundle_path.parent / f"{bundle_path.name}.hbc"
+    await ctx.run(
+        str(hermesc_path),
+        ["-O", "-emit-binary", "-out", str(bytecode_path), str(bundle_path)],
+        cwd=project_dir,
+    )
+    if not bytecode_path.exists():
+        raise RuntimeError("hermesc reported success but produced no bytecode output file.")
+    bytecode_path.replace(bundle_path)
+
+
 async def _run_react_native_build(job: Job, ctx: _BuildContext) -> None:
     """Path D: a React Native project. Unlike capacitor-web, its android/
     Gradle project is real, hand-maintained source that must already be
@@ -989,8 +1124,12 @@ async def _run_react_native_build(job: Job, ctx: _BuildContext) -> None:
     android/ folder. The JS bundle and its assets are produced up front
     with `react-native bundle` (forcing --dev false so the resulting debug
     APK is self-contained and doesn't expect a Metro dev server to be
-    running), then the project's own gradlew builds the APK exactly like a
-    native Android project would.
+    running); if the project has Hermes enabled (the default since RN
+    0.70), that bundle is then compiled to Hermes bytecode in place —
+    skipping this step is the single most common way a from-scratch React
+    Native build pipeline produces an APK that installs fine and then
+    crashes on first launch. Only after that does the project's own
+    gradlew build the APK, exactly like a native Android project would.
     """
     project_dir = job.project_dir
     android_dir = project_dir / "android"
@@ -1035,6 +1174,23 @@ async def _run_react_native_build(job: Job, ctx: _BuildContext) -> None:
             "--reset-cache",
         ],
     )
+
+    if _detect_hermes_enabled(android_dir):
+        await _compile_hermes_bytecode(job, ctx, project_dir, bundle_output)
+        notice(
+            job,
+            level="info",
+            title="Compiled to Hermes bytecode",
+            message="This project's Android build has Hermes enabled, so the JS bundle was compiled "
+            "to Hermes bytecode before being packaged. A plain-JavaScript bundle would still build "
+            "into an APK successfully, but Hermes would refuse to run it at launch.",
+        )
+    else:
+        log(
+            job,
+            "Hermes is not enabled for this project (JSC engine) — packaging the plain JavaScript "
+            "bundle as-is.",
+        )
 
     # A module's manifest can live at any <module>/src/main/AndroidManifest.xml
     # — same reasoning as the native-android path, applied under android/
