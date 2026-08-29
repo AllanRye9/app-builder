@@ -210,32 +210,78 @@ def _has_gradle_project(d: Path) -> bool:
     return has_settings and has_build
 
 
+def _root_score(d: Path) -> int | None:
+    """Ranks how strongly a directory looks like *the* project root, not
+    just *a* directory that happens to contain a package.json.
+
+    Plenty of real-world archives contain more than one package.json —
+    a nested example/, docs/, website/, or workspace-member folder is
+    common, especially for React Native repos. Scoring by marker
+    specificity (rather than "any package.json qualifies") means a
+    react-native-declaring package.json always outranks an unrelated one
+    sitting at a shallower depth, so a docs site or example app one level
+    above the real RN project can no longer steal the root and get the
+    project misclassified as capacitor-web.
+
+    Returns None if d has no project marker at all. Higher is stronger:
+      4: pubspec.yaml (Flutter's own unambiguous marker)
+      3: package.json whose dependencies/devDependencies declare react-native
+      2: a real Gradle project (settings.gradle(.kts) + build.gradle(.kts))
+      1: a bare package.json (capacitor-web candidate — weakest signal,
+         since nearly any JS folder has one)
+    """
+    if (d / "pubspec.yaml").exists():
+        return 4
+    package_json_path = d / "package.json"
+    has_package_json = package_json_path.exists()
+    if has_package_json:
+        try:
+            if _package_json_deps_include_react_native(package_json_path.read_text(encoding="utf-8")):
+                return 3
+        except OSError:
+            pass
+    if _has_gradle_project(d):
+        return 2
+    if has_package_json:
+        return 1
+    return None
+
+
 def _locate_project_root(dest_dir: Path) -> Path | None:
     """Find the directory that actually holds the project, searching the
     whole extracted tree rather than assuming it landed at dest_dir.
 
     Some archives wrap the real project in one or more nested folders (a
-    repo name, a workspace folder, a stray extra layer, ...); this walks
-    everything under dest_dir and returns the shallowest directory that
-    looks like a project root — a pubspec.yaml, a package.json, or a
-    paired settings.gradle(.kts) + build.gradle(.kts). Returns dest_dir
-    itself if it already qualifies, or None if nothing anywhere does.
+    repo name, a workspace folder, a stray extra layer, ...) and some
+    contain more than one candidate root (a nested example/docs/website
+    folder with its own package.json, alongside the real app). This walks
+    everything under dest_dir and returns the strongest-scoring candidate
+    (see _root_score) — ties broken by shallowest depth, then by scan
+    order. Returns dest_dir itself if nothing deeper outranks it, or None
+    if nothing anywhere qualifies at all.
     """
-    def _is_root(d: Path) -> bool:
-        return (d / "pubspec.yaml").exists() or (d / "package.json").exists() or _has_gradle_project(d)
-
-    if _is_root(dest_dir):
-        return dest_dir
-
     best: Path | None = None
+    best_score: int | None = None
     best_depth: int | None = None
+
+    root_score = _root_score(dest_dir)
+    if root_score is not None:
+        best, best_score, best_depth = dest_dir, root_score, 0
+
     for path in dest_dir.rglob("*"):
         if not path.is_dir():
             continue
-        if _is_root(path):
-            depth = len(path.relative_to(dest_dir).parts)
-            if best_depth is None or depth < best_depth:
-                best, best_depth = path, depth
+        score = _root_score(path)
+        if score is None:
+            continue
+        depth = len(path.relative_to(dest_dir).parts)
+        if (
+            best_score is None
+            or score > best_score
+            or (score == best_score and depth < best_depth)
+        ):
+            best, best_score, best_depth = path, score, depth
+
     return best
 
 
